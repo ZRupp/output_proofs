@@ -1,0 +1,73 @@
+[project]
+name = "output_proofs"
+version = "0.1.0"
+description = "Adversarial benchmark for code generation with formal verification"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Output Proofs Team"}
+]
+
+dependencies = [
+    # Core
+    "libcst>=1.0.0",
+    "datasets>=3.4.0",
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+    "pydantic>=2.0.0",
+    "accelerate>=0.20.0",
+    # Verina dependencies
+    "dspy>=3.1.2",
+    "prefect>=3.4.1",
+    "jinja2>=3.1.6",
+    "loguru>=0.7.3",
+    "python-dotenv>=1.0.1",
+    "pyyaml>=6.0.1",
+    "rich>=13.9.4",
+    "tqdm>=4.67.1",
+    "typer>=0.15.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+output-proofs = "output_proofs.scripts.run_benchmark:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

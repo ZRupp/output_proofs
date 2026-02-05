@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""CLI script to run the output_proofs benchmark."""
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Add src to path for development
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from output_proofs.config import PipelineConfig, ModelConfig, FormalizerConfig
+from output_proofs.pipeline import BenchmarkPipeline
+from output_proofs.reporting.report import generate_report
+
+
+def setup_logging(verbose: bool = False):
+    """Setup logging configuration."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+        ]
+    )
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Run output_proofs benchmark pipeline"
+    )
+
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Code generation model name (default: from config.py)",
+    )
+
+    parser.add_argument(
+        "--formalizer",
+        type=str,
+        default=None,
+        help="Python to Lean translation model (default: from config.py)",
+    )
+
+    parser.add_argument(
+        "--variants",
+        type=int,
+        default=5,
+        help="Number of adversarial variants per task",
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("./results/benchmark_report.json"),
+        help="Output path for benchmark report",
+    )
+
+    parser.add_argument(
+        "--tasks",
+        type=int,
+        nargs="+",
+        help="Specific MBPP task IDs to run (runs all if not specified)",
+    )
+
+    parser.add_argument(
+        "--use-fim",
+        action="store_true",
+        help="Use FIM format for code generation (if model supports it)",
+    )
+
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Load tasks and variants without running inference",
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    """Main entry point."""
+    args = parse_args()
+    setup_logging(args.verbose)
+    logger = logging.getLogger(__name__)
+
+    # Build configuration - use defaults from config.py if not specified
+    model_config = ModelConfig()
+    if args.model:
+        model_config.model_name = args.model
+
+    formalizer_config = FormalizerConfig()
+    if args.formalizer:
+        formalizer_config.model_name = args.formalizer
+
+    logger.info("Starting output_proofs benchmark")
+    logger.info(f"Model: {model_config.model_name}")
+    logger.info(f"Formalizer: {formalizer_config.model_name}")
+    logger.info(f"Variants per task: {args.variants}")
+
+    config = PipelineConfig(
+        model=model_config,
+        formalizer=formalizer_config,
+        num_variants_per_task=args.variants,
+    )
+
+    # Create pipeline
+    pipeline = BenchmarkPipeline(config)
+
+    try:
+        if args.dry_run:
+            # Dry run: just load and show task info
+            from output_proofs.tasks.loader import load_combined_tasks, MBPP_TASK_IDS
+            from output_proofs.tasks.variants import generate_all_variants
+
+            logger.info("Dry run mode - loading tasks...")
+            tasks = load_combined_tasks()
+
+            if args.tasks:
+                tasks = [t for t in tasks if t.task_id in args.tasks]
+
+            logger.info(f"Loaded {len(tasks)} tasks")
+            logger.info(f"Available MBPP task IDs: {MBPP_TASK_IDS}")
+
+            variants = generate_all_variants(tasks, args.variants)
+            logger.info(f"Would generate {len(variants)} variants")
+
+            for v in variants[:5]:
+                logger.info(f"  - {v.variant_id}: transforms={v.transforms_applied}")
+
+            return 0
+
+        # Run full benchmark
+        logger.info("Running benchmark pipeline...")
+        report = pipeline.run(
+            num_variants_per_task=args.variants,
+            use_fim=args.use_fim,
+        )
+
+        # Save report
+        logger.info(f"Saving report to {args.output}")
+        report.save_detailed(args.output)
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print("BENCHMARK RESULTS")
+        print("=" * 60)
+        print(f"Model: {report.model}")
+        print(f"Formalizer: {report.formalizer}")
+        print(f"Total tasks: {report.total_tasks}")
+        print(f"Total variants: {report.total_variants}")
+        print()
+        print("Pipeline Stage Success Rates:")
+        print(f"  Python generation: {report.pipeline_stages.python_generation_rate:.2%}")
+        print(f"  Translation:       {report.pipeline_stages.translation_success_rate:.2%}")
+        print(f"  Lean compilation:  {report.pipeline_stages.lean_compilation_rate:.2%}")
+        print(f"  Verification:      {report.pipeline_stages.verification_pass_rate:.2%}")
+        print()
+        print("Robustness Metrics:")
+        print(f"  Original pass rate: {report.robustness.original_pass_rate:.2%}")
+        print(f"  Variant pass rate:  {report.robustness.variant_pass_rate:.2%}")
+        print(f"  Robustness score:   {report.robustness.robustness_score:.2%}")
+        print()
+        print("By Transform:")
+        for name, rate in report.by_transform.items():
+            print(f"  {name}: {rate:.2%}")
+        print("=" * 60)
+
+        return 0
+
+    except KeyboardInterrupt:
+        logger.info("Benchmark interrupted by user")
+        return 1
+
+    except Exception as e:
+        logger.exception(f"Benchmark failed: {e}")
+        return 1
+
+    finally:
+        pipeline.cleanup()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

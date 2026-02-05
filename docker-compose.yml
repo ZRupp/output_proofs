@@ -1,0 +1,26 @@
+services:
+  benchmark:
+    build: .
+    environment:
+      - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
+      - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ./results:/app/results
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  # CPU-only profile for testing/dry-run without GPU
+  benchmark-cpu:
+    build: .
+    environment:
+      - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
+      - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ./results:/app/results
+      - ~/.cache/huggingface:/root/.cache/huggingface

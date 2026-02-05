@@ -1,0 +1,3 @@
+[submodule "vendor/verina"]
+	path = vendor/verina
+	url = https://github.com/sunblaze-ucb/verina.git
