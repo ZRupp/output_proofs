@@ -1,10 +1,14 @@
 services:
   benchmark:
-    build: .
+    build:
+      context: .
+      args:
+        - BASE_IMAGE=${BASE_IMAGE:-pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime}
     environment:
       - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
       - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
       - HF_TOKEN=${HF_TOKEN:-}
+      - DEVICE=${DEVICE:-auto}
     volumes:
       - ./results:/app/results
       - ~/.cache/huggingface:/root/.cache/huggingface
@@ -16,11 +20,15 @@ services:
 
   # CPU-only profile for testing/dry-run without GPU
   benchmark-cpu:
-    build: .
+    build:
+      context: .
+      args:
+        - BASE_IMAGE=${BASE_IMAGE:-pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime}
     environment:
       - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
       - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
       - HF_TOKEN=${HF_TOKEN:-}
+      - DEVICE=cpu
     volumes:
       - ./results:/app/results
       - ~/.cache/huggingface:/root/.cache/huggingface

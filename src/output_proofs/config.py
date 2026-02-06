@@ -10,6 +10,26 @@ import os
 from typing import Optional
 
 
+def detect_device() -> str:
+    """Detect the best available compute device.
+
+    Checks DEVICE env var first, then probes for GPU availability.
+    Works with both CUDA and ROCm (torch.cuda.is_available() returns
+    True for both backends).
+    """
+    env = os.environ.get("DEVICE")
+    if env:
+        return env.lower()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
+
+
 @dataclass
 class PathConfig:
     """Path configuration - all paths relative to project root or from env vars."""
@@ -48,9 +68,8 @@ class ModelConfig:
     Model name can be overridden via INFERENCE_MODEL environment variable.
     """
 
-    model_name: str = field(default_factory=lambda:
-        os.environ.get("INFERENCE_MODEL", "gpt2"))
-    device: str = "cuda"
+    model_name: str = field(default_factory=lambda: os.environ.get("INFERENCE_MODEL", "gpt2"))
+    device: str = field(default_factory=detect_device)
     max_new_tokens: int = 512
     temperature: float = 0.2
     top_p: float = 0.95
@@ -64,9 +83,12 @@ class FormalizerConfig:
     Model name can be overridden via FORMALIZER_MODEL environment variable.
     """
 
-    model_name: str = field(default_factory=lambda:
-        os.environ.get("FORMALIZER_MODEL", "Goedel-LM/Goedel-Formalizer-V2-8B"))
-    device: str = "cuda"
+    model_name: str = field(
+        default_factory=lambda: os.environ.get(
+            "FORMALIZER_MODEL", "Goedel-LM/Goedel-Formalizer-V2-8B"
+        )
+    )
+    device: str = field(default_factory=detect_device)
     max_new_tokens: int = 1024
     temperature: float = 0.2
     top_p: float = 0.95
@@ -79,10 +101,18 @@ class TransformConfig:
 
     # V_noise variable names for obfuscation
     v_noise_names: tuple = (
-        "__tmp0", "__tmp1", "__tmp2",
-        "var_x", "var_y", "var_z",
-        "_arg0", "_arg1", "_arg2",
-        "_v0", "_v1", "_v2",
+        "__tmp0",
+        "__tmp1",
+        "__tmp2",
+        "var_x",
+        "var_y",
+        "var_z",
+        "_arg0",
+        "_arg1",
+        "_arg2",
+        "_v0",
+        "_v1",
+        "_v2",
     )
 
     # Number of variants to generate per task

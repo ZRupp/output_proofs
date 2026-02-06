@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from output_proofs.config import detect_device
 from output_proofs.tasks.schema import MBPPTask, VerinaSpec, CombinedTask, TaskVariant
 from output_proofs.tasks.variants import (
     VariantGenerator,
@@ -17,6 +18,7 @@ try:
         create_instruction_prompt,
         get_fim_tokens,
     )
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -201,7 +203,7 @@ class TestReporting:
         report = aggregate_results(sample_results)
 
         # 2 out of 3 had python generated
-        assert report.pipeline_stages.python_generation_rate == pytest.approx(2/3, rel=0.01)
+        assert report.pipeline_stages.python_generation_rate == pytest.approx(2 / 3, rel=0.01)
 
     def test_robustness_metrics(self, sample_results):
         """Test robustness metrics calculation."""
@@ -218,3 +220,29 @@ class TestReporting:
         assert "model" in data
         assert "pipeline_stages" in data
         assert "robustness" in data
+
+
+class TestDetectDevice:
+    """Tests for detect_device() helper."""
+
+    def test_env_var_override(self, monkeypatch):
+        """DEVICE env var should take priority."""
+        monkeypatch.setenv("DEVICE", "cpu")
+        assert detect_device() == "cpu"
+
+    def test_env_var_case_insensitive(self, monkeypatch):
+        """DEVICE env var should be lowercased."""
+        monkeypatch.setenv("DEVICE", "CUDA")
+        assert detect_device() == "cuda"
+
+    def test_gpu_available(self, monkeypatch):
+        """Should return 'cuda' when torch reports GPU available."""
+        monkeypatch.delenv("DEVICE", raising=False)
+        with patch("torch.cuda.is_available", return_value=True):
+            assert detect_device() == "cuda"
+
+    def test_no_gpu(self, monkeypatch):
+        """Should return 'cpu' when no GPU available."""
+        monkeypatch.delenv("DEVICE", raising=False)
+        with patch("torch.cuda.is_available", return_value=False):
+            assert detect_device() == "cpu"

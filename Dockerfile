@@ -1,4 +1,5 @@
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+ARG BASE_IMAGE=pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

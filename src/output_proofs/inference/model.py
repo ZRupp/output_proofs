@@ -52,20 +52,20 @@ class CodeGenerator:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Use float16 only if CUDA is available, otherwise float32 for CPU
-        use_cuda = torch.cuda.is_available() and self.config.device == "cuda"
-        dtype = torch.float16 if use_cuda else torch.float32
+        # Use float16 only if GPU is available, otherwise float32 for CPU
+        use_gpu = torch.cuda.is_available() and self.config.device != "cpu"
+        dtype = torch.float16 if use_gpu else torch.float32
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             torch_dtype=dtype,
-            device_map="auto" if use_cuda else None,
+            device_map="auto" if use_gpu else None,
             trust_remote_code=True,
             attn_implementation="eager",  # Avoid flash_attn compatibility issues
         )
 
-        # Move to CPU explicitly if not using CUDA
-        if not use_cuda:
+        # Move to CPU explicitly if not using GPU
+        if not use_gpu:
             self.model = self.model.to("cpu")
 
         self.prompt_builder = PromptBuilder(self.tokenizer)
@@ -123,7 +123,7 @@ class CodeGenerator:
             )
 
             # Extract generated code (remove prompt)
-            generated = full_response[len(prompt):].strip()
+            generated = full_response[len(prompt) :].strip()
 
             # Clean up the generated code
             generated_code = self._extract_code(generated)
@@ -139,7 +139,7 @@ class CodeGenerator:
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             return GenerationResult(
-                prompt=prompt if 'prompt' in locals() else "",
+                prompt=prompt if "prompt" in locals() else "",
                 generated_code="",
                 full_response="",
                 success=False,
@@ -201,4 +201,5 @@ class CodeGenerator:
             del self.tokenizer
             self.tokenizer = None
         self._loaded = False
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

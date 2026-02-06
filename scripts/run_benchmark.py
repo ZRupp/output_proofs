@@ -22,15 +22,13 @@ def setup_logging(verbose: bool = False):
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(),
-        ]
+        ],
     )
 
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Run output_proofs benchmark pipeline"
-    )
+    parser = argparse.ArgumentParser(description="Run output_proofs benchmark pipeline")
 
     parser.add_argument(
         "--model",
@@ -74,7 +72,8 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )
@@ -83,6 +82,14 @@ def parse_args():
         "--dry-run",
         action="store_true",
         help="Load tasks and variants without running inference",
+    )
+
+    parser.add_argument(
+        "--device",
+        type=str,
+        choices=["cuda", "cpu", "auto"],
+        default=None,
+        help="Compute device: cuda, cpu, or auto (default: auto-detect)",
     )
 
     return parser.parse_args()
@@ -102,6 +109,10 @@ def main():
     formalizer_config = FormalizerConfig()
     if args.formalizer:
         formalizer_config.model_name = args.formalizer
+
+    if args.device:
+        model_config.device = args.device
+        formalizer_config.device = args.device
 
     logger.info("Starting output_proofs benchmark")
     logger.info(f"Model: {model_config.model_name}")

@@ -49,20 +49,20 @@ class GoedelFormalizer:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Use float16 only if CUDA is available, otherwise float32 for CPU
-        use_cuda = torch.cuda.is_available() and self.config.device == "cuda"
-        dtype = torch.float16 if use_cuda else torch.float32
+        # Use float16 only if GPU is available, otherwise float32 for CPU
+        use_gpu = torch.cuda.is_available() and self.config.device != "cpu"
+        dtype = torch.float16 if use_gpu else torch.float32
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             torch_dtype=dtype,
             attn_implementation="eager",  # Avoid flash_attn compatibility issues
-            device_map="auto" if use_cuda else None,
+            device_map="auto" if use_gpu else None,
             trust_remote_code=True,
         )
 
-        # Move to CPU explicitly if not using CUDA
-        if not use_cuda:
+        # Move to CPU explicitly if not using GPU
+        if not use_gpu:
             self.model = self.model.to("cpu")
 
         self._loaded = True
@@ -193,26 +193,26 @@ Python:
         """
         # Try markdown code block
         if "```lean" in response:
-            match = re.search(r'```lean\n?(.*?)```', response, re.DOTALL)
+            match = re.search(r"```lean\n?(.*?)```", response, re.DOTALL)
             if match:
                 return match.group(1).strip()
 
         # Try generic code block
         if "```" in response:
             # Find the last code block (likely the output)
-            blocks = re.findall(r'```(?:\w*\n)?(.*?)```', response, re.DOTALL)
+            blocks = re.findall(r"```(?:\w*\n)?(.*?)```", response, re.DOTALL)
             if blocks:
                 # Return the last block that looks like Lean
                 for block in reversed(blocks):
-                    if 'def ' in block or 'theorem ' in block or ':=' in block:
+                    if "def " in block or "theorem " in block or ":=" in block:
                         return block.strip()
                 # If no Lean-looking block, return the last one
                 return blocks[-1].strip()
 
         # Try to find Lean code directly
-        if 'def ' in response and ':=' in response:
+        if "def " in response and ":=" in response:
             # Find function definition
-            match = re.search(r'(def\s+\w+.*?)(?=\n\n|\Z)', response, re.DOTALL)
+            match = re.search(r"(def\s+\w+.*?)(?=\n\n|\Z)", response, re.DOTALL)
             if match:
                 return match.group(1).strip()
 
@@ -251,4 +251,5 @@ Python:
             del self.tokenizer
             self.tokenizer = None
         self._loaded = False
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
