@@ -3,15 +3,24 @@
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
-        "command": "bash -c 'FILE=\"$CLAUDE_FILE_PATH\"; if [[ \"$FILE\" == *.py ]]; then black --quiet \"$FILE\" 2>/dev/null; ruff check --fix --quiet \"$FILE\" 2>/dev/null; fi'",
-        "description": "Auto-format Python files with black + ruff after edits"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"$CLAUDE_FILE_PATH\"; if [[ \"$FILE\" == *.py ]]; then black --quiet \"$FILE\" 2>/dev/null; ruff check --fix --quiet \"$FILE\" 2>/dev/null; fi'",
+            "statusMessage": "Formatting with black + ruff"
+          }
+        ]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write",
-        "command": "bash -c 'FILE=\"$CLAUDE_FILE_PATH\"; if [[ \"$FILE\" == *.env* ]]; then echo \"BLOCKED: Refusing to edit .env files — add secrets manually\"; exit 1; fi; if [[ \"$FILE\" == */vendor/* ]]; then echo \"BLOCKED: vendor/ is a git submodule — do not edit\"; exit 1; fi'",
-        "description": "Block edits to .env files and vendor/ directory"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"$CLAUDE_FILE_PATH\"; if [[ \"$FILE\" == *.env* ]]; then echo \"BLOCKED: Refusing to edit .env files\" >&2; exit 2; fi; if [[ \"$FILE\" == */vendor/* ]]; then echo \"BLOCKED: vendor/ is a git submodule\" >&2; exit 2; fi'"
+          }
+        ]
       }
     ]
   }
