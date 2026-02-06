@@ -25,6 +25,17 @@ vendor/                # Vendored dependencies (verina submodule)
 - Run tests: `pytest`
 - Format: `black .` and `ruff check .`
 
+## Claude Code
+
+This project includes Claude Code automations in `.claude/`:
+
+- **`settings.json`** — Shared hooks (auto-format with black/ruff) and permissions
+- **`skills/`** — `/run-benchmark` and `/new-transform` slash commands
+- **`agents/`** — `benchmark-analyzer` and `security-reviewer` sub-agents
+- **`.github/workflows/ci.yml`** — CI pipeline (lint, typecheck, test)
+
+New contributors: clone the repo and Claude Code auto-discovers everything. See `CLAUDE.local.md` for personal overrides (auto-gitignored).
+
 ## Docker
 
 Build and run with Docker Compose:
