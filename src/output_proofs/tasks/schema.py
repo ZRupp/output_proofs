@@ -1,7 +1,7 @@
 """Data schemas for MBPP tasks and Verina specifications."""
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -9,10 +9,10 @@ class MBPPTask:
     """Python task from MBPP dataset."""
 
     task_id: int
-    text: str                           # Task description
-    code: str                           # Reference Python solution
-    test_list: List[str]                # Python test assertions
-    test_setup_code: str = ""           # Setup code for tests
+    text: str  # Task description
+    code: str  # Reference Python solution
+    test_list: List[str]  # Python test assertions
+    test_setup_code: str = ""  # Setup code for tests
     challenge_test_list: List[str] = field(default_factory=list)
 
     @classmethod
@@ -32,10 +32,10 @@ class MBPPTask:
 class VerinaSpec:
     """Lean specification from Verina dataset."""
 
-    data_id: str                        # e.g., "verina_basic_46"
-    lean_code: str                      # Reference Lean implementation
-    signature: Dict[str, Any]           # Function signature dict
-    description: str                    # Task description
+    data_id: str  # e.g., "verina_basic_46"
+    lean_code: str  # Reference Lean implementation
+    signature: Dict[str, Any]  # Function signature dict
+    description: str  # Task description
     tests: Dict[str, Any] = field(default_factory=dict)  # Test inputs/outputs
     metadata: Dict[str, Any] = field(default_factory=dict)  # Upstream info
     difficulty: str = "basic"
@@ -79,7 +79,7 @@ class CombinedTask:
 
     mbpp: MBPPTask
     verina: VerinaSpec
-    task_id: int                        # Shared identifier
+    task_id: int  # Shared identifier
 
     @property
     def description(self) -> str:
@@ -103,13 +103,13 @@ class TaskVariant:
 
     original_task: CombinedTask
     variant_id: str
-    transformed_description: str        # Modified description with V_noise
-    transformed_signature: str          # Function signature with noisy params
-    func_name: str                      # Function name
-    noisy_params: str                   # Parameter string with noisy names
+    transformed_description: str  # Modified description with V_noise
+    transformed_signature: str  # Function signature with noisy params
+    func_name: str  # Function name
+    noisy_params: str  # Parameter string with noisy names
     transforms_applied: List[str]
-    param_mapping: Dict[str, str]       # original_name -> noisy_name
-    reverse_mapping: Dict[str, str]     # noisy_name -> original_name
+    param_mapping: Dict[str, str]  # original_name -> noisy_name
+    reverse_mapping: Dict[str, str]  # noisy_name -> original_name
 
     @property
     def task_id(self) -> int:

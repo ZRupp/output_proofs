@@ -4,40 +4,102 @@ Implements V_noise obfuscation from the adversarial task definition.
 """
 
 import random
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Optional, Set
+
 import libcst as cst
-from libcst import matchers as m
 
 from .base import BaseTransform, TransformResult
 
-
 # Variable noise set from circuitproofs Phase 1
 V_NOISE = [
-    "__tmp0", "__tmp1", "__tmp2",
-    "var_x", "var_y", "var_z",
-    "_arg0", "_arg1", "_arg2",
-    "_v0", "_v1", "_v2",
+    "__tmp0",
+    "__tmp1",
+    "__tmp2",
+    "var_x",
+    "var_y",
+    "var_z",
+    "_arg0",
+    "_arg1",
+    "_arg2",
+    "_v0",
+    "_v1",
+    "_v2",
 ]
 
 # Names to never rename (Python builtins, common functions)
 PROTECTED_NAMES = {
     # Builtins
-    "True", "False", "None",
-    "print", "len", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
-    "sum", "max", "min", "abs", "round", "sorted", "reversed", "enumerate", "zip", "map", "filter",
-    "isinstance", "type", "hasattr", "getattr", "setattr",
-    "open", "input", "format",
+    "True",
+    "False",
+    "None",
+    "print",
+    "len",
+    "range",
+    "str",
+    "int",
+    "float",
+    "bool",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "sum",
+    "max",
+    "min",
+    "abs",
+    "round",
+    "sorted",
+    "reversed",
+    "enumerate",
+    "zip",
+    "map",
+    "filter",
+    "isinstance",
+    "type",
+    "hasattr",
+    "getattr",
+    "setattr",
+    "open",
+    "input",
+    "format",
     # Common imports
-    "math", "re", "os", "sys",
+    "math",
+    "re",
+    "os",
+    "sys",
     # Control flow
-    "return", "if", "else", "elif", "for", "while", "break", "continue",
-    "try", "except", "finally", "raise", "assert",
-    "and", "or", "not", "in", "is",
+    "return",
+    "if",
+    "else",
+    "elif",
+    "for",
+    "while",
+    "break",
+    "continue",
+    "try",
+    "except",
+    "finally",
+    "raise",
+    "assert",
+    "and",
+    "or",
+    "not",
+    "in",
+    "is",
     # Class/function keywords
-    "def", "class", "self", "cls", "lambda",
-    "import", "from", "as",
+    "def",
+    "class",
+    "self",
+    "cls",
+    "lambda",
+    "import",
+    "from",
+    "as",
     # Common patterns
-    "result", "output", "ans", "answer",
+    "result",
+    "output",
+    "ans",
+    "answer",
 }
 
 
@@ -87,19 +149,13 @@ class VariableRenamerTransformer(cst.CSTTransformer):
     def __init__(self, rename_map: Dict[str, str]):
         self.rename_map = rename_map
 
-    def leave_Name(
-        self, original_node: cst.Name, updated_node: cst.Name
-    ) -> cst.Name:
+    def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
         """Rename variable references."""
         if updated_node.value in self.rename_map:
-            return updated_node.with_changes(
-                value=self.rename_map[updated_node.value]
-            )
+            return updated_node.with_changes(value=self.rename_map[updated_node.value])
         return updated_node
 
-    def leave_Param(
-        self, original_node: cst.Param, updated_node: cst.Param
-    ) -> cst.Param:
+    def leave_Param(self, original_node: cst.Param, updated_node: cst.Param) -> cst.Param:
         """Rename function parameters."""
         if updated_node.name and updated_node.name.value in self.rename_map:
             new_name = cst.Name(self.rename_map[updated_node.name.value])

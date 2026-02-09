@@ -1,20 +1,18 @@
 """End-to-end benchmark pipeline orchestration."""
 
-import asyncio
 import logging
-from dataclasses import dataclass
-from typing import List, Optional
-from pathlib import Path
+from dataclasses import asdict, dataclass
+from typing import Dict, List, Optional
 
-from .config import PipelineConfig, ModelConfig, FormalizerConfig, PathConfig
-from .tasks.loader import load_combined_tasks, load_mbpp_only
+from .cache import ResultCache
+from .config import PipelineConfig
+from .inference.model import CodeGenerator, GenerationResult
+from .reporting.report import BenchmarkReport, aggregate_results
+from .tasks.loader import load_combined_tasks
 from .tasks.schema import CombinedTask, TaskVariant
 from .tasks.variants import VariantGenerator, generate_all_variants
-from .inference.model import CodeGenerator, GenerationResult
-from .inference.prompts import PromptBuilder
 from .translation.goedel_formalizer import GoedelFormalizer, TranslationResult
 from .verification.lean_verifier import LeanVerifier, VerificationResult
-from .reporting.report import BenchmarkReport, aggregate_results, generate_report
 
 logger = logging.getLogger(__name__)
 
@@ -58,23 +56,26 @@ class BenchmarkPipeline:
         self.code_generator: Optional[CodeGenerator] = None
         self.translator: Optional[GoedelFormalizer] = None
         self.verifier: Optional[LeanVerifier] = None
+        self.cache: Optional[ResultCache] = None
         self._initialized = False
 
     def _initialize(self):
-        """Initialize pipeline components lazily."""
+        """Initialize pipeline components lazily.
+
+        Only sets up the verifier and cache — models are loaded on-demand
+        in each phase to avoid holding both in VRAM simultaneously.
+        """
         if self._initialized:
             return
 
         logger.info("Initializing pipeline components...")
 
-        # Initialize code generator
-        self.code_generator = CodeGenerator(self.config.model)
-
-        # Initialize translator
-        self.translator = GoedelFormalizer(self.config.formalizer)
-
-        # Initialize verifier
+        # Initialize verifier (no GPU model)
         self.verifier = LeanVerifier(self.config.paths)
+
+        # Initialize cache
+        default_cache_dir = self.config.paths.results_dir / "cache"
+        self.cache = ResultCache(self.config.cache, default_cache_dir=default_cache_dir)
 
         self._initialized = True
         logger.info("Pipeline initialized")
@@ -85,7 +86,11 @@ class BenchmarkPipeline:
         num_variants_per_task: int = None,
         use_fim: bool = False,
     ) -> BenchmarkReport:
-        """Run the complete benchmark pipeline.
+        """Run the complete benchmark pipeline using phased execution.
+
+        Phase 1: Load generation model, batch-generate all variants, unload.
+        Phase 2: Load translation model, batch-translate all variants, unload.
+        Phase 3: Verify all translated Lean code (CPU-only).
 
         Args:
             tasks: Tasks to benchmark (loads from datasets if None)
@@ -105,7 +110,9 @@ class BenchmarkPipeline:
 
         if not tasks:
             logger.warning("No tasks loaded")
-            return aggregate_results([], self.config.model.model_name, self.config.formalizer.model_name)
+            return aggregate_results(
+                [], self.config.model.model_name, self.config.formalizer.model_name
+            )
 
         # Generate variants
         num_variants = num_variants_per_task or self.config.num_variants_per_task
@@ -113,23 +120,244 @@ class BenchmarkPipeline:
         all_variants = generate_all_variants(tasks, num_variants)
         logger.info(f"Generated {len(all_variants)} total variants")
 
-        # Run pipeline on all variants
-        all_results = []
-        for i, variant in enumerate(all_variants):
-            logger.info(f"Processing variant {i+1}/{len(all_variants)}: {variant.variant_id}")
+        # Phase 1: Code generation
+        gen_results = self._phase_generate(all_variants, use_fim)
 
-            result = self._process_variant(variant, use_fim)
-            if result.verification_result:
-                all_results.append(result.verification_result)
+        # Phase 2: Translation
+        trans_results = self._phase_translate(all_variants, gen_results)
+
+        # Phase 3: Verification
+        all_verification_results = self._phase_verify(all_variants, gen_results, trans_results)
 
         # Aggregate and return report
         report = aggregate_results(
-            all_results,
+            all_verification_results,
             self.config.model.model_name,
             self.config.formalizer.model_name,
         )
 
         return report
+
+    # ------------------------------------------------------------------
+    # Phase 1: Code generation
+    # ------------------------------------------------------------------
+
+    def _phase_generate(
+        self,
+        variants: List[TaskVariant],
+        use_fim: bool,
+    ) -> Dict[str, GenerationResult]:
+        """Generate Python code for all variants.
+
+        Loads the generation model, batch-processes uncached variants,
+        caches results, then unloads the model.
+        """
+        logger.info("=== Phase 1: Code Generation ===")
+        results: Dict[str, GenerationResult] = {}
+        uncached_variants: List[TaskVariant] = []
+        uncached_indices: List[int] = []
+
+        # Check cache
+        for i, variant in enumerate(variants):
+            cached = self.cache.get_generation(
+                variant.task_id,
+                variant.variant_id,
+                variant.transforms_applied,
+                self.config.model.model_name,
+            )
+            if cached is not None:
+                results[variant.variant_id] = GenerationResult(**cached)
+                logger.debug(f"Cache hit for generation: {variant.variant_id}")
+            else:
+                uncached_variants.append(variant)
+                uncached_indices.append(i)
+
+        if not uncached_variants:
+            logger.info(f"All {len(variants)} generation results from cache")
+            return results
+
+        logger.info(
+            f"Generating {len(uncached_variants)} variants "
+            f"({len(variants) - len(uncached_variants)} cached)"
+        )
+
+        # Load model, generate, unload
+        generator = CodeGenerator(self.config.model)
+        generator.load()
+
+        try:
+            batch_results = generator.generate_batch(
+                uncached_variants,
+                use_fim=use_fim,
+                batch_size=self.config.generation_batch_size,
+            )
+
+            for variant, result in zip(uncached_variants, batch_results):
+                results[variant.variant_id] = result
+                if self.cache.enabled:
+                    self.cache.put_generation(
+                        variant.task_id,
+                        variant.variant_id,
+                        variant.transforms_applied,
+                        self.config.model.model_name,
+                        asdict(result),
+                    )
+        finally:
+            generator.unload()
+            del generator
+
+        logger.info(f"Phase 1 complete: {sum(1 for r in results.values() if r.success)} succeeded")
+        return results
+
+    # ------------------------------------------------------------------
+    # Phase 2: Translation
+    # ------------------------------------------------------------------
+
+    def _phase_translate(
+        self,
+        variants: List[TaskVariant],
+        gen_results: Dict[str, GenerationResult],
+    ) -> Dict[str, TranslationResult]:
+        """Translate generated Python code to Lean 4.
+
+        Skips variants where generation failed. Loads the translation model,
+        batch-processes uncached variants, caches results, then unloads.
+        """
+        logger.info("=== Phase 2: Translation ===")
+        results: Dict[str, TranslationResult] = {}
+
+        # Filter to variants with successful generation
+        translatable = [
+            v
+            for v in variants
+            if gen_results.get(v.variant_id, None) is not None and gen_results[v.variant_id].success
+        ]
+
+        uncached_variants: List[TaskVariant] = []
+
+        # Check cache
+        for variant in translatable:
+            cached = self.cache.get_translation(
+                variant.task_id,
+                variant.variant_id,
+                variant.transforms_applied,
+                self.config.formalizer.model_name,
+            )
+            if cached is not None:
+                results[variant.variant_id] = TranslationResult(**cached)
+                logger.debug(f"Cache hit for translation: {variant.variant_id}")
+            else:
+                uncached_variants.append(variant)
+
+        if not uncached_variants:
+            logger.info(
+                f"All {len(translatable)} translation results from cache "
+                f"({len(variants) - len(translatable)} skipped due to generation failure)"
+            )
+            return results
+
+        logger.info(
+            f"Translating {len(uncached_variants)} variants "
+            f"({len(translatable) - len(uncached_variants)} cached, "
+            f"{len(variants) - len(translatable)} skipped)"
+        )
+
+        # Load model, translate, unload
+        translator = GoedelFormalizer(self.config.formalizer)
+        translator.load()
+
+        try:
+            python_codes = [gen_results[v.variant_id].generated_code for v in uncached_variants]
+            tasks = [v.original_task for v in uncached_variants]
+
+            batch_results = translator.translate_batch(
+                python_codes,
+                tasks,
+                batch_size=self.config.translation_batch_size,
+            )
+
+            for variant, result in zip(uncached_variants, batch_results):
+                results[variant.variant_id] = result
+                if self.cache.enabled:
+                    self.cache.put_translation(
+                        variant.task_id,
+                        variant.variant_id,
+                        variant.transforms_applied,
+                        self.config.formalizer.model_name,
+                        asdict(result),
+                    )
+        finally:
+            translator.unload()
+            del translator
+
+        logger.info(f"Phase 2 complete: {sum(1 for r in results.values() if r.success)} succeeded")
+        return results
+
+    # ------------------------------------------------------------------
+    # Phase 3: Verification
+    # ------------------------------------------------------------------
+
+    def _phase_verify(
+        self,
+        variants: List[TaskVariant],
+        gen_results: Dict[str, GenerationResult],
+        trans_results: Dict[str, TranslationResult],
+    ) -> List[VerificationResult]:
+        """Verify Lean code for all variants.
+
+        Builds VerificationResult for every variant, including failures
+        at earlier stages.
+        """
+        logger.info("=== Phase 3: Verification ===")
+        all_results = []
+
+        for variant in variants:
+            gen = gen_results.get(variant.variant_id)
+            trans = trans_results.get(variant.variant_id)
+
+            # Generation failed
+            if gen is None or not gen.success:
+                continue
+
+            # Translation failed or skipped
+            if trans is None or not trans.success:
+                error_msg = trans.error if trans else "Translation skipped"
+                all_results.append(
+                    VerificationResult(
+                        task_id=variant.task_id,
+                        variant_id=variant.variant_id,
+                        python_generated=gen.generated_code if gen else "",
+                        lean_translated="",
+                        translation_success=False,
+                        lean_compiles=False,
+                        tests_passed=0,
+                        tests_failed=0,
+                        tests_total=0,
+                        proof_valid=None,
+                        error=f"Translation failed: {error_msg}",
+                    )
+                )
+                continue
+
+            # Run verification
+            logger.debug(f"Verifying Lean for {variant.variant_id}")
+            verify_result = self.verifier.verify(
+                trans.lean_code,
+                variant.original_task,
+                variant.variant_id,
+                gen.generated_code,
+            )
+            all_results.append(verify_result)
+
+        logger.info(
+            f"Phase 3 complete: {sum(1 for r in all_results if r.success)}/{len(all_results)} "
+            "passed verification"
+        )
+        return all_results
+
+    # ------------------------------------------------------------------
+    # Single-variant processing (for debugging)
+    # ------------------------------------------------------------------
 
     def _process_variant(
         self,
@@ -138,6 +366,8 @@ class BenchmarkPipeline:
     ) -> PipelineResult:
         """Process a single variant through the pipeline.
 
+        Lazy-loads models as needed. Kept for debugging and single-task runs.
+
         Args:
             variant: Task variant to process
             use_fim: Whether to use FIM format
@@ -145,6 +375,12 @@ class BenchmarkPipeline:
         Returns:
             PipelineResult with all stage results
         """
+        # Ensure models are available for single-variant mode
+        if self.code_generator is None:
+            self.code_generator = CodeGenerator(self.config.model)
+        if self.translator is None:
+            self.translator = GoedelFormalizer(self.config.formalizer)
+
         # Stage 1: Generate Python code
         logger.debug(f"Generating Python for {variant.variant_id}")
         gen_result = self.code_generator.generate(variant, use_fim=use_fim)

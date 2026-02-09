@@ -9,9 +9,14 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from output_proofs.config import PipelineConfig, ModelConfig, FormalizerConfig
+from output_proofs.config import (
+    CacheConfig,
+    FormalizerConfig,
+    ModelConfig,
+    PipelineConfig,
+    QuantizationConfig,
+)
 from output_proofs.pipeline import BenchmarkPipeline
-from output_proofs.reporting.report import generate_report
 
 
 def setup_logging(verbose: bool = False):
@@ -92,6 +97,50 @@ def parse_args():
         help="Compute device: cuda, cpu, or auto (default: auto-detect)",
     )
 
+    # Quantization
+    parser.add_argument(
+        "--quantize",
+        type=int,
+        choices=[4, 8],
+        default=None,
+        help="Enable int4 or int8 quantization (requires bitsandbytes)",
+    )
+
+    # Caching
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        help="Enable disk-based result caching for resumable runs",
+    )
+
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear cache before running",
+    )
+
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Custom cache directory (default: results/cache)",
+    )
+
+    # Batch sizes
+    parser.add_argument(
+        "--generation-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for code generation (default: 8)",
+    )
+
+    parser.add_argument(
+        "--translation-batch-size",
+        type=int,
+        default=4,
+        help="Batch size for translation (default: 4)",
+    )
+
     return parser.parse_args()
 
 
@@ -101,12 +150,18 @@ def main():
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
 
-    # Build configuration - use defaults from config.py if not specified
-    model_config = ModelConfig()
+    # Build quantization config
+    quant_config = QuantizationConfig(
+        enabled=args.quantize is not None,
+        bits=args.quantize or 8,
+    )
+
+    # Build model configs
+    model_config = ModelConfig(quantization=quant_config)
     if args.model:
         model_config.model_name = args.model
 
-    formalizer_config = FormalizerConfig()
+    formalizer_config = FormalizerConfig(quantization=quant_config)
     if args.formalizer:
         formalizer_config.model_name = args.formalizer
 
@@ -114,24 +169,49 @@ def main():
         model_config.device = args.device
         formalizer_config.device = args.device
 
+    # Build cache config
+    cache_config = CacheConfig(
+        enabled=args.cache,
+        cache_dir=args.cache_dir,
+    )
+
     logger.info("Starting output_proofs benchmark")
     logger.info(f"Model: {model_config.model_name}")
     logger.info(f"Formalizer: {formalizer_config.model_name}")
     logger.info(f"Variants per task: {args.variants}")
+    if quant_config.enabled:
+        logger.info(f"Quantization: {quant_config.bits}-bit")
+    if cache_config.enabled:
+        logger.info(f"Caching: enabled (dir={args.cache_dir or 'results/cache'})")
+    logger.info(
+        f"Batch sizes: generation={args.generation_batch_size}, "
+        f"translation={args.translation_batch_size}"
+    )
 
     config = PipelineConfig(
         model=model_config,
         formalizer=formalizer_config,
         num_variants_per_task=args.variants,
+        generation_batch_size=args.generation_batch_size,
+        translation_batch_size=args.translation_batch_size,
+        cache=cache_config,
     )
 
     # Create pipeline
     pipeline = BenchmarkPipeline(config)
 
     try:
+        # Clear cache if requested
+        if args.clear_cache:
+            from output_proofs.cache import ResultCache
+
+            cache = ResultCache(cache_config)
+            cache.clear()
+            logger.info("Cache cleared")
+
         if args.dry_run:
             # Dry run: just load and show task info
-            from output_proofs.tasks.loader import load_combined_tasks, MBPP_TASK_IDS
+            from output_proofs.tasks.loader import MBPP_TASK_IDS, load_combined_tasks
             from output_proofs.tasks.variants import generate_all_variants
 
             logger.info("Dry run mode - loading tasks...")

@@ -1,14 +1,13 @@
 """Lean verification using Verina's verification infrastructure."""
 
-import sys
 import asyncio
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
-from pathlib import Path
 import logging
+import sys
+from dataclasses import dataclass
+from typing import List, Optional
 
 from ..config import PathConfig
-from ..tasks.schema import CombinedTask, TaskVariant
+from ..tasks.schema import CombinedTask
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +63,7 @@ def _setup_verina_import():
     if verina_path not in sys.path:
         sys.path.insert(0, verina_path)
     # Test that verina can actually be imported
-    import verina
+
     return True
 
 
@@ -106,8 +105,7 @@ class LeanVerifier:
         """
         if not self._verina_available:
             return self._verify_fallback(
-                lean_code, task, variant_id, python_code,
-                "Verina not available"
+                lean_code, task, variant_id, python_code, "Verina not available"
             )
 
         try:
@@ -118,9 +116,7 @@ class LeanVerifier:
             )
         except RuntimeError:
             # No event loop, create one
-            return asyncio.run(
-                self._verify_async(lean_code, task, variant_id, python_code)
-            )
+            return asyncio.run(self._verify_async(lean_code, task, variant_id, python_code))
 
     async def _verify_async(
         self,
@@ -131,6 +127,7 @@ class LeanVerifier:
     ) -> VerificationResult:
         """Async verification using Verina APIs."""
         import time
+
         start_time = time.time()
 
         try:
@@ -154,12 +151,10 @@ class LeanVerifier:
 
             # Parse results
             tests_passed = sum(
-                1 for s in score.unit_tests.values()
-                if hasattr(s, 'value') and s.value == "pass"
+                1 for s in score.unit_tests.values() if hasattr(s, "value") and s.value == "pass"
             )
             tests_failed = sum(
-                1 for s in score.unit_tests.values()
-                if hasattr(s, 'value') and s.value == "fail"
+                1 for s in score.unit_tests.values() if hasattr(s, "value") and s.value == "fail"
             )
             tests_total = len(score.unit_tests)
 
@@ -182,8 +177,7 @@ class LeanVerifier:
         except ImportError as e:
             logger.error(f"Verina import error: {e}")
             return self._verify_fallback(
-                lean_code, task, variant_id, python_code,
-                f"Verina import error: {e}"
+                lean_code, task, variant_id, python_code, f"Verina import error: {e}"
             )
         except Exception as e:
             logger.error(f"Verification error: {e}")
@@ -207,6 +201,7 @@ class LeanVerifier:
         """Create Lean generation template from task."""
         try:
             from verina.dataset.template import LeanGenerationTaskTemplate
+
             return LeanGenerationTaskTemplate(task.verina.signature)
         except Exception:
             # Return a minimal template if creation fails
@@ -244,8 +239,8 @@ class LeanVerifier:
         Performs basic syntax checking only.
         """
         # Basic check: does the code look like valid Lean?
-        has_def = 'def ' in lean_code or 'theorem ' in lean_code
-        has_assignment = ':=' in lean_code
+        has_def = "def " in lean_code or "theorem " in lean_code
+        has_assignment = ":=" in lean_code
 
         return VerificationResult(
             task_id=task.task_id,

@@ -1,18 +1,16 @@
 """Tests for LibCST transformations."""
 
-import pytest
 from output_proofs.transforms.rename import (
     VariableRenamer,
     generate_noise_variants,
-    V_NOISE,
 )
 from output_proofs.transforms.reorder import (
     ParameterReorderer,
     generate_reorder_variants,
 )
 from output_proofs.transforms.test_adapter import (
-    adapt_tests_for_variant,
     adapt_single_test,
+    adapt_tests_for_variant,
 )
 
 
@@ -21,10 +19,10 @@ class TestVariableRenamer:
 
     def test_basic_rename(self):
         """Test basic variable renaming."""
-        code = '''def foo(x, y):
+        code = """def foo(x, y):
     z = x + y
     return z
-'''
+"""
         renamer = VariableRenamer(seed=42)
         result = renamer.transform(code)
 
@@ -34,9 +32,9 @@ class TestVariableRenamer:
 
     def test_preserves_function_name(self):
         """Function name should not be renamed."""
-        code = '''def my_function(a, b):
+        code = """def my_function(a, b):
     return a + b
-'''
+"""
         renamer = VariableRenamer(seed=42)
         result = renamer.transform(code)
 
@@ -45,10 +43,10 @@ class TestVariableRenamer:
 
     def test_protected_names_not_renamed(self):
         """Builtin names should not be renamed."""
-        code = '''def foo(x):
+        code = """def foo(x):
     result = len(x)
     return result
-'''
+"""
         renamer = VariableRenamer(seed=42)
         result = renamer.transform(code)
 
@@ -57,10 +55,10 @@ class TestVariableRenamer:
 
     def test_generate_variants(self):
         """Test generating multiple variants."""
-        code = '''def bar(a, b):
+        code = """def bar(a, b):
     c = a * b
     return c
-'''
+"""
         variants = generate_noise_variants(code, num_variants=3, seed=42)
 
         assert len(variants) == 3
@@ -74,9 +72,9 @@ class TestParameterReorderer:
 
     def test_basic_reorder(self):
         """Test basic parameter reordering."""
-        code = '''def foo(a, b, c):
+        code = """def foo(a, b, c):
     return a + b + c
-'''
+"""
         reorderer = ParameterReorderer(permutation=[2, 0, 1])
         result = reorderer.transform(code)
 
@@ -85,9 +83,9 @@ class TestParameterReorderer:
 
     def test_single_param_unchanged(self):
         """Single parameter should not be reordered."""
-        code = '''def foo(x):
+        code = """def foo(x):
     return x * 2
-'''
+"""
         reorderer = ParameterReorderer(seed=42)
         result = reorderer.transform(code)
 
@@ -97,9 +95,9 @@ class TestParameterReorderer:
 
     def test_star_args_not_reordered(self):
         """Functions with *args should not be reordered."""
-        code = '''def foo(a, *args):
+        code = """def foo(a, *args):
     return a + sum(args)
-'''
+"""
         reorderer = ParameterReorderer(seed=42)
         can_apply = reorderer.can_apply(code)
 
@@ -107,9 +105,9 @@ class TestParameterReorderer:
 
     def test_generate_reorder_variants(self):
         """Test generating multiple reorder variants."""
-        code = '''def bar(x, y, z):
+        code = """def bar(x, y, z):
     return x - y + z
-'''
+"""
         variants = generate_reorder_variants(code, num_variants=3, seed=42)
 
         # Some variants may be the same due to random permutations
@@ -160,10 +158,10 @@ class TestTransformIntegration:
 
     def test_rename_then_adapt_tests(self):
         """Test renaming variables then adapting tests."""
-        code = '''def square(n):
+        code = """def square(n):
     result = n * n
     return result
-'''
+"""
         tests = [
             "assert square(n=2) == 4",
             "assert square(n=3) == 9",

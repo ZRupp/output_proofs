@@ -5,6 +5,7 @@ Handles the critical Warning C: Noisy params break keyword argument calls in tes
 
 import re
 from typing import Dict, List, Optional
+
 import libcst as cst
 
 
@@ -15,9 +16,7 @@ class TestCallTransformer(cst.CSTTransformer):
         self.func_name = func_name
         self.param_mapping = param_mapping  # old_name -> new_name
 
-    def leave_Call(
-        self, original_node: cst.Call, updated_node: cst.Call
-    ) -> cst.Call:
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.Call:
         """Transform keyword arguments in function calls."""
         # Check if this is a call to our target function
         if isinstance(updated_node.func, cst.Name):
@@ -50,12 +49,12 @@ def extract_function_name(test_assertion: str) -> Optional[str]:
         "assert bar(x=1) == 2" -> "bar"
     """
     # Pattern: assert func_name(...)
-    match = re.search(r'assert\s+(\w+)\s*\(', test_assertion)
+    match = re.search(r"assert\s+(\w+)\s*\(", test_assertion)
     if match:
         return match.group(1)
 
     # Pattern: func_name(...) ==
-    match = re.search(r'(\w+)\s*\([^)]*\)\s*==', test_assertion)
+    match = re.search(r"(\w+)\s*\([^)]*\)\s*==", test_assertion)
     if match:
         return match.group(1)
 
@@ -91,7 +90,7 @@ def adapt_single_test(
         # Extract the transformed test
         modified_code = modified.code
         # Remove the wrapper
-        lines = modified_code.strip().split('\n')
+        lines = modified_code.strip().split("\n")
         if len(lines) >= 2:
             return lines[1].strip()
 
@@ -107,11 +106,7 @@ def _regex_adapt_test(test: str, param_mapping: Dict[str, str]) -> str:
     result = test
     for old_name, new_name in param_mapping.items():
         # Replace keyword arguments: old_name= -> new_name=
-        result = re.sub(
-            rf'\b{re.escape(old_name)}\s*=',
-            f'{new_name}=',
-            result
-        )
+        result = re.sub(rf"\b{re.escape(old_name)}\s*=", f"{new_name}=", result)
     return result
 
 
@@ -166,8 +161,8 @@ def adapt_test_code_block(
         return modified.code
     except cst.ParserSyntaxError:
         # Fallback: adapt line by line
-        lines = test_code.split('\n')
+        lines = test_code.split("\n")
         adapted_lines = []
         for line in lines:
             adapted_lines.append(_regex_adapt_test(line, param_mapping))
-        return '\n'.join(adapted_lines)
+        return "\n".join(adapted_lines)

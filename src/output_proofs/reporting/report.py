@@ -1,10 +1,10 @@
 """Benchmark reporting and result aggregation."""
 
 import json
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional
-from pathlib import Path
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
 
 from ..verification.lean_verifier import VerificationResult
 
@@ -118,7 +118,7 @@ class BenchmarkReport:
     def save(self, path: Path) -> None:
         """Save report to JSON file."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
     def save_detailed(self, path: Path) -> None:
@@ -126,7 +126,7 @@ class BenchmarkReport:
         data = self.to_dict()
         data["results"] = self.results
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
 
@@ -175,13 +175,19 @@ def aggregate_results(
     pipeline_stages = PipelineStageMetrics(
         python_generation_rate=python_success / total_variants if total_variants > 0 else 0,
         translation_success_rate=translation_success / python_success if python_success > 0 else 0,
-        lean_compilation_rate=compilation_success / translation_success if translation_success > 0 else 0,
+        lean_compilation_rate=(
+            compilation_success / translation_success if translation_success > 0 else 0
+        ),
         verification_pass_rate=verification_success / total_variants if total_variants > 0 else 0,
     )
 
     # Robustness metrics (original vs variants)
-    original_results = [r for r in results if r.variant_id.endswith("_v0") or r.variant_id == "original"]
-    variant_results = [r for r in results if not (r.variant_id.endswith("_v0") or r.variant_id == "original")]
+    original_results = [
+        r for r in results if r.variant_id.endswith("_v0") or r.variant_id == "original"
+    ]
+    variant_results = [
+        r for r in results if not (r.variant_id.endswith("_v0") or r.variant_id == "original")
+    ]
 
     original_pass = sum(1 for r in original_results if r.success)
     variant_pass = sum(1 for r in variant_results if r.success)
@@ -243,7 +249,7 @@ def _compute_transform_metrics(results: List[VerificationResult]) -> Dict[str, f
             # Find transform keywords
             for i, part in enumerate(parts):
                 if part in ("noise", "rename", "reorder"):
-                    transform_name = "_".join(parts[i-1:i+1]) if i > 0 else part
+                    transform_name = "_".join(parts[i - 1 : i + 1]) if i > 0 else part
                     if transform_name not in transform_results:
                         transform_results[transform_name] = []
                     transform_results[transform_name].append(r)

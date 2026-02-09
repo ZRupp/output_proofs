@@ -1,9 +1,8 @@
 """Tests for task loading."""
 
 import pytest
-from unittest.mock import patch, MagicMock
 
-from output_proofs.tasks.schema import MBPPTask, VerinaSpec, CombinedTask
+from output_proofs.tasks.schema import CombinedTask, MBPPTask, VerinaSpec
 
 # Skip loader tests if datasets not available
 try:
@@ -12,6 +11,7 @@ try:
         _extract_function_name,
         build_task_mapping,
     )
+
     HAS_DATASETS = True
 except ImportError:
     HAS_DATASETS = False
@@ -103,9 +103,8 @@ class TestSchema:
         verina = VerinaSpec(
             data_id="verina_basic_1",
             lean_code="def test := 0",
-            signature="test : Nat",
-            precond="True",
-            postcond="True",
+            signature={"name": "test"},
+            description="Test task",
         )
         combined = CombinedTask(mbpp=mbpp, verina=verina, task_id=101)
 

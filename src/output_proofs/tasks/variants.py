@@ -1,15 +1,14 @@
 """Generate adversarial task variants using LibCST transformations."""
 
-import re
 import random
-from typing import List, Dict, Optional
-from dataclasses import dataclass
+import re
+from typing import Dict, List
 
-from .schema import CombinedTask, TaskVariant
-from ..transforms.base import BaseTransform, TransformResult
-from ..transforms.rename import VariableRenamer, V_NOISE
+from ..transforms.base import BaseTransform
+from ..transforms.rename import VariableRenamer
 from ..transforms.reorder import ParameterReorderer
 from ..transforms.test_adapter import adapt_tests_for_variant
+from .schema import CombinedTask, TaskVariant
 
 
 def extract_function_info(code: str) -> Dict[str, str]:
@@ -22,7 +21,7 @@ def extract_function_info(code: str) -> Dict[str, str]:
     match = re.search(
         r'def\s+(\w+)\s*\(([^)]*)\)\s*:(?:\s*(?:"""([^"]*)"""|\'\'\'([^\']*)\'\'\'))?',
         code,
-        re.DOTALL
+        re.DOTALL,
     )
 
     if match:
@@ -53,7 +52,7 @@ def transform_description(
         # Only process string -> string mappings (skip reorder int mappings)
         if isinstance(new_name, str):
             # Replace whole word occurrences
-            result = re.sub(rf'\b{re.escape(old_name)}\b', new_name, result)
+            result = re.sub(rf"\b{re.escape(old_name)}\b", new_name, result)
     return result
 
 
@@ -104,7 +103,7 @@ class VariantGenerator:
 
             for transform in self.transforms:
                 # Set seed for this specific variant
-                if hasattr(transform, 'rng'):
+                if hasattr(transform, "rng"):
                     transform.rng = random.Random(variant_seed + len(applied_transforms))
 
                 if transform.can_apply(reference_code):
@@ -141,8 +140,8 @@ class VariantGenerator:
                 variant_id=f"{task.task_id}_v{i}",
                 transformed_description=transformed_desc,
                 transformed_signature=f"def {new_func_info['name']}({new_func_info['params']}):",
-                func_name=new_func_info['name'],
-                noisy_params=new_func_info['params'],
+                func_name=new_func_info["name"],
+                noisy_params=new_func_info["params"],
                 transforms_applied=applied_transforms,
                 param_mapping=str_mapping,
                 reverse_mapping={v: k for k, v in str_mapping.items()},

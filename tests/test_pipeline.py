@@ -1,10 +1,11 @@
 """Tests for pipeline components."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from output_proofs.config import detect_device
-from output_proofs.tasks.schema import MBPPTask, VerinaSpec, CombinedTask, TaskVariant
+import pytest
+
+from output_proofs.config import CacheConfig, PipelineConfig, detect_device
+from output_proofs.tasks.schema import CombinedTask, MBPPTask, TaskVariant, VerinaSpec
 from output_proofs.tasks.variants import (
     VariantGenerator,
     extract_function_info,
@@ -18,6 +19,7 @@ try:
         create_instruction_prompt,
         get_fim_tokens,
     )
+    from output_proofs.pipeline import BenchmarkPipeline
 
     HAS_TORCH = True
 except ImportError:
@@ -25,11 +27,10 @@ except ImportError:
     PromptBuilder = None
     create_instruction_prompt = None
     get_fim_tokens = None
+    BenchmarkPipeline = None
 
 from output_proofs.reporting.report import (
     aggregate_results,
-    BenchmarkReport,
-    PipelineStageMetrics,
 )
 from output_proofs.verification.lean_verifier import VerificationResult
 
@@ -49,9 +50,8 @@ class TestVariantGenerator:
         verina = VerinaSpec(
             data_id="verina_basic_1",
             lean_code="def add (a b : Nat) : Nat := a + b",
-            signature="add : Nat → Nat → Nat",
-            precond="True",
-            postcond="result = a + b",
+            signature={"name": "add"},
+            description="Add two numbers",
         )
         return CombinedTask(mbpp=mbpp, verina=verina, task_id=101)
 
@@ -111,9 +111,8 @@ class TestPromptBuilder:
         verina = VerinaSpec(
             data_id="verina_basic_1",
             lean_code="",
-            signature="",
-            precond="",
-            postcond="",
+            signature={},
+            description="",
         )
         task = CombinedTask(mbpp=mbpp, verina=verina, task_id=101)
 
@@ -246,3 +245,283 @@ class TestDetectDevice:
         monkeypatch.delenv("DEVICE", raising=False)
         with patch("torch.cuda.is_available", return_value=False):
             assert detect_device() == "cpu"
+
+
+class TestPhasedPipeline:
+    """Tests for phase-based pipeline execution."""
+
+    @pytest.fixture
+    def sample_task(self):
+        """Create a sample combined task with correct VerinaSpec fields."""
+        mbpp = MBPPTask(
+            task_id=101,
+            text="Write a function to add two numbers",
+            code="def add(a, b):\n    return a + b",
+            test_list=["assert add(1, 2) == 3"],
+        )
+        verina = VerinaSpec(
+            data_id="verina_basic_1",
+            lean_code="def add (a b : Nat) : Nat := a + b",
+            signature={"name": "add"},
+            description="Add two numbers",
+        )
+        return CombinedTask(mbpp=mbpp, verina=verina, task_id=101)
+
+    @pytest.fixture
+    def sample_variants(self, sample_task):
+        """Create sample variants."""
+        return [
+            TaskVariant(
+                original_task=sample_task,
+                variant_id="101_v0",
+                transformed_description="Add two numbers",
+                transformed_signature="def add(var_a, var_b):",
+                func_name="add",
+                noisy_params="var_a, var_b",
+                transforms_applied=["v_noise_rename"],
+                param_mapping={"a": "var_a", "b": "var_b"},
+                reverse_mapping={"var_a": "a", "var_b": "b"},
+            ),
+            TaskVariant(
+                original_task=sample_task,
+                variant_id="101_v1",
+                transformed_description="Add two numbers",
+                transformed_signature="def add(_arg0, _arg1):",
+                func_name="add",
+                noisy_params="_arg0, _arg1",
+                transforms_applied=["v_noise_rename"],
+                param_mapping={"a": "_arg0", "b": "_arg1"},
+                reverse_mapping={"_arg0": "a", "_arg1": "b"},
+            ),
+        ]
+
+    @pytest.fixture
+    def gen_result_dict(self):
+        return {
+            "prompt": "test prompt",
+            "generated_code": "def add(a, b): return a + b",
+            "full_response": "def add(a, b): return a + b",
+            "success": True,
+            "error": None,
+            "tokens_generated": 10,
+        }
+
+    @pytest.fixture
+    def trans_result_dict(self):
+        return {
+            "python_code": "def add(a, b): return a + b",
+            "lean_code": "def add (a b : Nat) : Nat := a + b",
+            "success": True,
+            "error": None,
+            "prompt_used": "Translate...",
+        }
+
+    @patch("output_proofs.pipeline.GoedelFormalizer")
+    @patch("output_proofs.pipeline.CodeGenerator")
+    @patch("output_proofs.pipeline.LeanVerifier")
+    @patch("output_proofs.pipeline.generate_all_variants")
+    @patch("output_proofs.pipeline.load_combined_tasks")
+    def test_generation_model_unloaded_before_translation(
+        self,
+        mock_load_tasks,
+        mock_gen_variants,
+        mock_verifier_cls,
+        mock_gen_cls,
+        mock_trans_cls,
+        sample_task,
+        sample_variants,
+    ):
+        """Generation model is unloaded before translation model loads."""
+        mock_load_tasks.return_value = [sample_task]
+        mock_gen_variants.return_value = sample_variants
+
+        # Track call order
+        call_order = []
+
+        mock_generator = MagicMock()
+        mock_generator.generate_batch.return_value = [
+            MagicMock(success=True, generated_code="def add(a,b): return a+b")
+            for _ in sample_variants
+        ]
+
+        def gen_load():
+            call_order.append("gen_load")
+
+        def gen_unload():
+            call_order.append("gen_unload")
+
+        mock_generator.load.side_effect = gen_load
+        mock_generator.unload.side_effect = gen_unload
+        mock_gen_cls.return_value = mock_generator
+
+        mock_translator = MagicMock()
+        mock_translator.translate_batch.return_value = [
+            MagicMock(success=True, lean_code="def add := sorry") for _ in sample_variants
+        ]
+
+        def trans_load():
+            call_order.append("trans_load")
+
+        def trans_unload():
+            call_order.append("trans_unload")
+
+        mock_translator.load.side_effect = trans_load
+        mock_translator.unload.side_effect = trans_unload
+        mock_trans_cls.return_value = mock_translator
+
+        mock_verifier = MagicMock()
+        mock_verifier.verify.return_value = VerificationResult(
+            task_id=101,
+            variant_id="101_v0",
+            python_generated="",
+            lean_translated="",
+            translation_success=True,
+            lean_compiles=True,
+            tests_passed=1,
+            tests_failed=0,
+            tests_total=1,
+            proof_valid=None,
+        )
+        mock_verifier_cls.return_value = mock_verifier
+
+        config = PipelineConfig(
+            cache=CacheConfig(enabled=False),
+        )
+        pipeline = BenchmarkPipeline(config)
+        pipeline.run(tasks=[sample_task])
+
+        # Verify ordering: generation model unloaded before translation model loads
+        assert "gen_load" in call_order
+        assert "gen_unload" in call_order
+        assert "trans_load" in call_order
+        gen_unload_idx = call_order.index("gen_unload")
+        trans_load_idx = call_order.index("trans_load")
+        assert gen_unload_idx < trans_load_idx
+
+    @patch("output_proofs.pipeline.GoedelFormalizer")
+    @patch("output_proofs.pipeline.CodeGenerator")
+    @patch("output_proofs.pipeline.LeanVerifier")
+    @patch("output_proofs.pipeline.generate_all_variants")
+    @patch("output_proofs.pipeline.load_combined_tasks")
+    def test_failed_generation_skips_translation(
+        self,
+        mock_load_tasks,
+        mock_gen_variants,
+        mock_verifier_cls,
+        mock_gen_cls,
+        mock_trans_cls,
+        sample_task,
+        sample_variants,
+    ):
+        """Variants with failed generation are not sent to translation."""
+        mock_load_tasks.return_value = [sample_task]
+        mock_gen_variants.return_value = sample_variants
+
+        # First variant succeeds, second fails
+        mock_generator = MagicMock()
+        mock_generator.generate_batch.return_value = [
+            MagicMock(success=True, generated_code="def add(a,b): return a+b"),
+            MagicMock(success=False, generated_code="", error="OOM"),
+        ]
+        mock_gen_cls.return_value = mock_generator
+
+        mock_translator = MagicMock()
+        mock_translator.translate_batch.return_value = [
+            MagicMock(success=True, lean_code="def add := sorry"),
+        ]
+        mock_trans_cls.return_value = mock_translator
+
+        mock_verifier = MagicMock()
+        mock_verifier.verify.return_value = VerificationResult(
+            task_id=101,
+            variant_id="101_v0",
+            python_generated="",
+            lean_translated="",
+            translation_success=True,
+            lean_compiles=True,
+            tests_passed=1,
+            tests_failed=0,
+            tests_total=1,
+            proof_valid=None,
+        )
+        mock_verifier_cls.return_value = mock_verifier
+
+        config = PipelineConfig(cache=CacheConfig(enabled=False))
+        pipeline = BenchmarkPipeline(config)
+        pipeline.run(tasks=[sample_task])
+
+        # Only 1 variant should be translated (the successful one)
+        codes_arg = mock_translator.translate_batch.call_args[0][0]
+        assert len(codes_arg) == 1
+
+    def test_cached_results_reused(self, sample_task, sample_variants, tmp_path):
+        """Cached generation and translation results skip model loading entirely."""
+        from output_proofs.cache import ResultCache
+
+        cache_config = CacheConfig(enabled=True, cache_dir=tmp_path / "cache")
+        cache = ResultCache(cache_config)
+
+        # Pre-populate cache for both variants (generation + translation)
+        for variant in sample_variants:
+            cache.put_generation(
+                variant.task_id,
+                variant.variant_id,
+                variant.transforms_applied,
+                "gpt2",
+                {
+                    "prompt": "cached prompt",
+                    "generated_code": "def add(a,b): return a+b",
+                    "full_response": "cached",
+                    "success": True,
+                    "error": None,
+                    "tokens_generated": 5,
+                },
+            )
+            cache.put_translation(
+                variant.task_id,
+                variant.variant_id,
+                variant.transforms_applied,
+                "Goedel-LM/Goedel-Formalizer-V2-8B",
+                {
+                    "python_code": "def add(a,b): return a+b",
+                    "lean_code": "def add (a b : Nat) : Nat := a + b",
+                    "success": True,
+                    "error": None,
+                    "prompt_used": "cached",
+                },
+            )
+
+        config = PipelineConfig(cache=cache_config)
+        pipeline = BenchmarkPipeline(config)
+
+        with (
+            patch("output_proofs.pipeline.CodeGenerator") as mock_gen_cls,
+            patch("output_proofs.pipeline.GoedelFormalizer") as mock_trans_cls,
+            patch("output_proofs.pipeline.LeanVerifier") as mock_verifier_cls,
+            patch("output_proofs.pipeline.generate_all_variants") as mock_gen_variants,
+            patch("output_proofs.pipeline.load_combined_tasks") as mock_load_tasks,
+        ):
+
+            mock_load_tasks.return_value = [sample_task]
+            mock_gen_variants.return_value = sample_variants
+
+            mock_verifier = MagicMock()
+            mock_verifier.verify.return_value = VerificationResult(
+                task_id=101,
+                variant_id="101_v0",
+                python_generated="",
+                lean_translated="",
+                translation_success=True,
+                lean_compiles=True,
+                tests_passed=1,
+                tests_failed=0,
+                tests_total=1,
+                proof_valid=None,
+            )
+            mock_verifier_cls.return_value = mock_verifier
+
+            pipeline.run(tasks=[sample_task])
+
+            # Neither model should be instantiated since all results are cached
+            mock_gen_cls.assert_not_called()
+            mock_trans_cls.assert_not_called()

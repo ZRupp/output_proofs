@@ -1,26 +1,70 @@
 """Task loading from MBPP and Verina datasets."""
 
-from typing import List, Dict, Optional
-from datasets import load_dataset
 import re
+from typing import Dict, List, Optional
 
-from .schema import MBPPTask, VerinaSpec, CombinedTask
+from datasets import load_dataset
 
+from .schema import CombinedTask, MBPPTask, VerinaSpec
 
 # 49 MBPP task_ids that have Verina Lean specifications
 # Note: task_id 644 is excluded - it exists in MBPP but was not translated to Lean in Verina
 MBPP_TASK_IDS = [
-    807, 760, 755, 743, 732, 616, 741, 474, 733,
-    632, 629, 627, 625, 624, 610, 605, 602, 600, 599,
-    594, 588, 579, 576, 803, 573, 567, 566, 477, 472,
-    798, 454, 447, 441, 435, 433, 793, 431, 404, 784,
-    267, 775, 227, 127, 770, 101, 77, 764, 62, 58
+    807,
+    760,
+    755,
+    743,
+    732,
+    616,
+    741,
+    474,
+    733,
+    632,
+    629,
+    627,
+    625,
+    624,
+    610,
+    605,
+    602,
+    600,
+    599,
+    594,
+    588,
+    579,
+    576,
+    803,
+    573,
+    567,
+    566,
+    477,
+    472,
+    798,
+    454,
+    447,
+    441,
+    435,
+    433,
+    793,
+    431,
+    404,
+    784,
+    267,
+    775,
+    227,
+    127,
+    770,
+    101,
+    77,
+    764,
+    62,
+    58,
 ]
 
 
 def _extract_function_name(code: str) -> Optional[str]:
     """Extract function name from Python code."""
-    match = re.search(r'def\s+(\w+)\s*\(', code)
+    match = re.search(r"def\s+(\w+)\s*\(", code)
     return match.group(1) if match else None
 
 
@@ -149,11 +193,13 @@ def load_combined_tasks() -> List[CombinedTask]:
     combined = []
     for task_id, mbpp_task in mbpp_tasks.items():
         if task_id in verina_specs:
-            combined.append(CombinedTask(
-                mbpp=mbpp_task,
-                verina=verina_specs[task_id],
-                task_id=task_id,
-            ))
+            combined.append(
+                CombinedTask(
+                    mbpp=mbpp_task,
+                    verina=verina_specs[task_id],
+                    task_id=task_id,
+                )
+            )
 
     return combined
 

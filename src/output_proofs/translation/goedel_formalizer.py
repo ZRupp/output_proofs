@@ -1,9 +1,9 @@
 """Translate Python code to Lean 4 using Goedel-Formalizer-V2-8B."""
 
-from dataclasses import dataclass, field
-from typing import Optional, List
 import logging
 import re
+from dataclasses import dataclass
+from typing import List, Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -23,6 +23,35 @@ class TranslationResult:
     success: bool
     error: Optional[str] = None
     prompt_used: str = ""
+
+
+def _build_quantization_config(quant_config):
+    """Build a BitsAndBytesConfig from our QuantizationConfig.
+
+    Returns None if quantization is disabled.
+    """
+    if not quant_config.enabled:
+        return None
+
+    try:
+        from transformers import BitsAndBytesConfig
+    except ImportError:
+        raise ImportError(
+            "bitsandbytes is required for quantization. "
+            "Install with: pip install output_proofs[gpu]"
+        )
+
+    if quant_config.bits == 8:
+        return BitsAndBytesConfig(load_in_8bit=True)
+    elif quant_config.bits == 4:
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=quant_config.double_quant,
+            bnb_4bit_quant_type=quant_config.quant_type,
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+    else:
+        raise ValueError(f"Unsupported quantization bits: {quant_config.bits}. Use 4 or 8.")
 
 
 class GoedelFormalizer:
@@ -49,21 +78,33 @@ class GoedelFormalizer:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Use float16 only if GPU is available, otherwise float32 for CPU
+        # Left-padding is required for correct batched autoregressive generation
+        self.tokenizer.padding_side = "left"
+
         use_gpu = torch.cuda.is_available() and self.config.device != "cpu"
-        dtype = torch.float16 if use_gpu else torch.float32
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.config.model_name,
-            torch_dtype=dtype,
-            attn_implementation="eager",  # Avoid flash_attn compatibility issues
-            device_map="auto" if use_gpu else None,
-            trust_remote_code=True,
-        )
+        # Build quantization config if enabled
+        bnb_config = _build_quantization_config(self.config.quantization)
 
-        # Move to CPU explicitly if not using GPU
-        if not use_gpu:
-            self.model = self.model.to("cpu")
+        if bnb_config is not None:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.config.model_name,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+                attn_implementation="eager",
+            )
+        else:
+            dtype = torch.float16 if use_gpu else torch.float32
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.config.model_name,
+                torch_dtype=dtype,
+                attn_implementation="eager",
+                device_map="auto" if use_gpu else None,
+                trust_remote_code=True,
+            )
+            if not use_gpu:
+                self.model = self.model.to("cpu")
 
         self._loaded = True
         logger.info("Goedel-Formalizer loaded successfully")
@@ -222,12 +263,18 @@ Python:
         self,
         python_codes: List[str],
         tasks: List[CombinedTask],
+        batch_size: int = 4,
     ) -> List[TranslationResult]:
-        """Translate multiple Python codes to Lean.
+        """Translate multiple Python codes to Lean using real batched inference.
+
+        Chunks inputs into batches, tokenizes together with left-padding,
+        and runs a single model.generate() call per batch.
+        Falls back to sequential processing if a batch fails.
 
         Args:
             python_codes: List of Python codes
             tasks: Corresponding tasks
+            batch_size: Number of items per batch
 
         Returns:
             List of translation results
@@ -235,10 +282,79 @@ Python:
         if len(python_codes) != len(tasks):
             raise ValueError("Number of codes and tasks must match")
 
+        if not self._loaded:
+            self.load()
+
+        results: List[Optional[TranslationResult]] = [None] * len(python_codes)
+
+        # Build all prompts upfront
+        prompts = [self._build_prompt(code, task) for code, task in zip(python_codes, tasks)]
+
+        # Process in chunks
+        for chunk_start in range(0, len(python_codes), batch_size):
+            chunk_end = min(chunk_start + batch_size, len(python_codes))
+            chunk_prompts = prompts[chunk_start:chunk_end]
+            chunk_codes = python_codes[chunk_start:chunk_end]
+            chunk_indices = list(range(chunk_start, chunk_end))
+
+            try:
+                chunk_results = self._translate_batch_chunk(chunk_prompts, chunk_codes)
+                for idx, result in zip(chunk_indices, chunk_results):
+                    results[idx] = result
+            except Exception as e:
+                logger.warning(f"Batch translation failed, falling back to sequential: {e}")
+                for idx in chunk_indices:
+                    results[idx] = self.translate(python_codes[idx], tasks[idx])
+
+        return results
+
+    def _translate_batch_chunk(
+        self, prompts: List[str], python_codes: List[str]
+    ) -> List[TranslationResult]:
+        """Translate a single batch chunk of prompts."""
+        inputs = self.tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048,
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.config.max_new_tokens,
+                temperature=self.config.temperature,
+                top_p=self.config.top_p,
+                do_sample=self.config.do_sample,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+
         results = []
-        for code, task in zip(python_codes, tasks):
-            result = self.translate(code, task)
-            results.append(result)
+        for i, (prompt, python_code) in enumerate(zip(prompts, python_codes)):
+            response = self.tokenizer.decode(outputs[i], skip_special_tokens=True)
+            lean_code = self._extract_lean_code(response)
+
+            if not lean_code:
+                results.append(
+                    TranslationResult(
+                        python_code=python_code,
+                        lean_code="",
+                        success=False,
+                        error="Failed to extract Lean code from response",
+                        prompt_used=prompt,
+                    )
+                )
+            else:
+                results.append(
+                    TranslationResult(
+                        python_code=python_code,
+                        lean_code=lean_code,
+                        success=True,
+                        prompt_used=prompt,
+                    )
+                )
 
         return results
 

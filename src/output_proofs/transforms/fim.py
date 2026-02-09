@@ -4,21 +4,21 @@ Implements the FIM formatting from the adversarial task definition.
 Uses V_noise variable names to ablate semantic shortcuts.
 """
 
-from typing import Optional, Dict, List
 from dataclasses import dataclass
+from typing import Dict, List
 
-from ..tasks.schema import TaskVariant, CombinedTask
+from ..tasks.schema import TaskVariant
 
 
 @dataclass
 class FIMTemplate:
     """A Fill-In-The-Middle template for code generation."""
 
-    prefix: str              # Code before the hole
-    suffix: str              # Code after the hole (empty per Warning A)
-    description: str         # Task description
-    func_name: str          # Function name
-    params: str             # Parameter string
+    prefix: str  # Code before the hole
+    suffix: str  # Code after the hole (empty per Warning A)
+    description: str  # Task description
+    func_name: str  # Function name
+    params: str  # Parameter string
     param_mapping: Dict[str, str]  # Original -> noisy param names
 
 
@@ -45,8 +45,8 @@ def create_fim_template(
     """{description}"""
 '''
     else:
-        prefix = f'''def {func_name}({params}):
-'''
+        prefix = f"""def {func_name}({params}):
+"""
 
     # Empty suffix per Warning A
     suffix = ""
@@ -78,7 +78,9 @@ def format_for_model(
     Returns:
         Formatted string ready for tokenization
     """
-    return f"{fim_prefix_token}{template.prefix}{fim_suffix_token}{template.suffix}{fim_middle_token}"
+    return (
+        f"{fim_prefix_token}{template.prefix}{fim_suffix_token}{template.suffix}{fim_middle_token}"
+    )
 
 
 def create_instruction_from_template(

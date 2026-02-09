@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+ARG BASE_IMAGE=rocm/pytorch:rocm7.2_ubuntu22.04_py3.10_pytorch_release_2.9.1
 FROM ${BASE_IMAGE}
 
 WORKDIR /app

@@ -4,11 +4,9 @@ Implements both instruction-tuned and FIM (Fill-In-The-Middle) formats.
 Handles Warning B: Tokenizer Compatibility for Llama-3.2.
 """
 
-from typing import Optional
 from dataclasses import dataclass
 
 from ..tasks.schema import TaskVariant
-
 
 # Llama 3 instruction format tokens
 LLAMA3_BOS = "<|begin_of_text|>"
@@ -39,7 +37,7 @@ def get_fim_tokens(tokenizer) -> FIMTokens:
     Returns appropriate tokens or indicates FIM is not supported.
     """
     # Check for common FIM token patterns
-    vocab = tokenizer.get_vocab() if hasattr(tokenizer, 'get_vocab') else {}
+    vocab = tokenizer.get_vocab() if hasattr(tokenizer, "get_vocab") else {}
 
     # CodeLlama / Llama 3 code format
     if "<|fim_prefix|>" in vocab:

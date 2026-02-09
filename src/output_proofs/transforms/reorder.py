@@ -1,7 +1,8 @@
 """Parameter reordering transformations using LibCST."""
 
 import random
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
+
 import libcst as cst
 
 from .base import BaseTransform, TransformResult
@@ -66,9 +67,9 @@ class ParameterReorderTransformer(cst.CSTTransformer):
         for i, param in enumerate(reordered):
             if i < len(reordered) - 1:
                 # Add comma after all but last
-                new_params.append(param.with_changes(
-                    comma=cst.Comma(whitespace_after=cst.SimpleWhitespace(" "))
-                ))
+                new_params.append(
+                    param.with_changes(comma=cst.Comma(whitespace_after=cst.SimpleWhitespace(" ")))
+                )
             else:
                 # Last param has no comma
                 new_params.append(param.with_changes(comma=cst.MaybeSentinel.DEFAULT))
@@ -83,9 +84,7 @@ class CallArgumentReorderTransformer(cst.CSTTransformer):
         self.func_name = func_name
         self.param_mapping = param_mapping  # param_name -> new_position
 
-    def leave_Call(
-        self, original_node: cst.Call, updated_node: cst.Call
-    ) -> cst.Call:
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.Call:
         """Reorder arguments in function calls."""
         # Check if this is a call to our target function
         if isinstance(updated_node.func, cst.Name):
@@ -118,9 +117,11 @@ class CallArgumentReorderTransformer(cst.CSTTransformer):
             new_args = []
             for i, arg in enumerate(args):
                 if i < len(args) - 1:
-                    new_args.append(arg.with_changes(
-                        comma=cst.Comma(whitespace_after=cst.SimpleWhitespace(" "))
-                    ))
+                    new_args.append(
+                        arg.with_changes(
+                            comma=cst.Comma(whitespace_after=cst.SimpleWhitespace(" "))
+                        )
+                    )
                 else:
                     new_args.append(arg.with_changes(comma=cst.MaybeSentinel.DEFAULT))
 

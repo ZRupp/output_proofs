@@ -4,9 +4,9 @@ All paths are relative or configurable via environment variables.
 No hardcoded absolute paths.
 """
 
-from pathlib import Path
-from dataclasses import dataclass, field
 import os
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
@@ -62,6 +62,24 @@ class PathConfig:
 
 
 @dataclass
+class QuantizationConfig:
+    """Configuration for model quantization via bitsandbytes."""
+
+    enabled: bool = False
+    bits: int = 8
+    double_quant: bool = True
+    quant_type: str = "nf4"
+
+
+@dataclass
+class CacheConfig:
+    """Configuration for disk-based result caching."""
+
+    enabled: bool = False
+    cache_dir: Optional[Path] = None
+
+
+@dataclass
 class ModelConfig:
     """Configuration for the code generation model.
 
@@ -74,6 +92,7 @@ class ModelConfig:
     temperature: float = 0.2
     top_p: float = 0.95
     do_sample: bool = True
+    quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
 
 
 @dataclass
@@ -93,6 +112,7 @@ class FormalizerConfig:
     temperature: float = 0.2
     top_p: float = 0.95
     do_sample: bool = True
+    quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
 
 
 @dataclass
@@ -134,7 +154,11 @@ class PipelineConfig:
 
     # Pipeline settings
     num_variants_per_task: int = 5
-    batch_size: int = 4
+    generation_batch_size: int = 8
+    translation_batch_size: int = 4
+
+    # Caching
+    cache: CacheConfig = field(default_factory=CacheConfig)
 
     @property
     def output_dir(self) -> Path:

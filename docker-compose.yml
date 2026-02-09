@@ -3,12 +3,13 @@ services:
     build:
       context: .
       args:
-        - BASE_IMAGE=${BASE_IMAGE:-pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime}
+        - BASE_IMAGE=${BASE_IMAGE:-rocm/pytorch:rocm7.2_ubuntu22.04_py3.10_pytorch_release_2.9.1}
     environment:
       - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
       - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
       - HF_TOKEN=${HF_TOKEN:-}
       - DEVICE=${DEVICE:-auto}
+      - HSA_OVERRIDE_GFX_VERSION=11.0.0
     volumes:
       - ./results:/app/results
       - ~/.cache/huggingface:/root/.cache/huggingface
@@ -23,7 +24,7 @@ services:
     build:
       context: .
       args:
-        - BASE_IMAGE=${BASE_IMAGE:-pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime}
+        - BASE_IMAGE=${BASE_IMAGE:-rocm/pytorch:rocm7.2_ubuntu22.04_py3.10_pytorch_release_2.9.1}
     environment:
       - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
       - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
