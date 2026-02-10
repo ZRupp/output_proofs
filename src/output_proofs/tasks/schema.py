@@ -33,22 +33,24 @@ class VerinaSpec:
     """Lean specification from Verina dataset."""
 
     data_id: str  # e.g., "verina_basic_46"
-    lean_code: str  # Reference Lean implementation
-    signature: Dict[str, Any]  # Function signature dict
+    lean_code: str  # Annotated Lean source (with !benchmark markers)
+    signature: Dict[str, Any]  # Function signature dict {name, parameters, return_type}
     description: str  # Task description
-    tests: Dict[str, Any] = field(default_factory=dict)  # Test inputs/outputs
+    tests: List[Dict[str, Any]] = field(default_factory=list)  # Test cases from HF
+    reject_inputs: List[Dict[str, Any]] = field(default_factory=list)  # Reject inputs
     metadata: Dict[str, Any] = field(default_factory=dict)  # Upstream info
     difficulty: str = "basic"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "VerinaSpec":
-        """Create VerinaSpec from dataset row."""
+        """Create VerinaSpec from HuggingFace dataset row."""
         return cls(
             data_id=data.get("id", data.get("data_id", "")),
             lean_code=data.get("lean_code", ""),
             signature=data.get("signature", {}),
             description=data.get("description", ""),
-            tests=data.get("tests", {}),
+            tests=data.get("tests", []),
+            reject_inputs=data.get("reject_inputs", []),
             metadata=data.get("metadata", {}),
             difficulty=data.get("difficulty", "basic"),
         )
