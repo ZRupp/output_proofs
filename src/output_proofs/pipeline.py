@@ -187,8 +187,10 @@ class BenchmarkPipeline:
         )
 
         # Load model, generate, unload
+        logger.info(f"Loading generation model: {self.config.model.model_name}")
         generator = CodeGenerator(self.config.model)
         generator.load()
+        logger.info("Generation model ready")
 
         try:
             batch_results = generator.generate_batch(
@@ -208,10 +210,13 @@ class BenchmarkPipeline:
                         asdict(result),
                     )
         finally:
+            logger.info("Unloading generation model")
             generator.unload()
             del generator
+            logger.info("Generation model unloaded")
 
-        logger.info(f"Phase 1 complete: {sum(1 for r in results.values() if r.success)} succeeded")
+        succeeded = sum(1 for r in results.values() if r.success)
+        logger.info(f"Phase 1 complete: {succeeded}/{len(results)} succeeded")
         return results
 
     # ------------------------------------------------------------------
@@ -268,8 +273,10 @@ class BenchmarkPipeline:
         )
 
         # Load model, translate, unload
+        logger.info(f"Loading translation model: {self.config.formalizer.model_name}")
         translator = GoedelFormalizer(self.config.formalizer)
         translator.load()
+        logger.info("Translation model ready")
 
         try:
             python_codes = [gen_results[v.variant_id].generated_code for v in uncached_variants]
@@ -292,10 +299,13 @@ class BenchmarkPipeline:
                         asdict(result),
                     )
         finally:
+            logger.info("Unloading translation model")
             translator.unload()
             del translator
+            logger.info("Translation model unloaded")
 
-        logger.info(f"Phase 2 complete: {sum(1 for r in results.values() if r.success)} succeeded")
+        succeeded = sum(1 for r in results.values() if r.success)
+        logger.info(f"Phase 2 complete: {succeeded}/{len(results)} succeeded")
         return results
 
     # ------------------------------------------------------------------
@@ -316,6 +326,16 @@ class BenchmarkPipeline:
         logger.info("=== Phase 3: Verification ===")
         all_results = []
 
+        # Count verifiable variants upfront for progress reporting
+        verifiable = [
+            v
+            for v in variants
+            if trans_results.get(v.variant_id) is not None
+            and trans_results[v.variant_id].success
+        ]
+        logger.info(f"Verifying {len(verifiable)} translated variants")
+
+        verified_count = 0
         for variant in variants:
             gen = gen_results.get(variant.variant_id)
             trans = trans_results.get(variant.variant_id)
@@ -345,7 +365,10 @@ class BenchmarkPipeline:
                 continue
 
             # Run verification
-            logger.debug(f"Verifying Lean for {variant.variant_id}")
+            verified_count += 1
+            logger.info(
+                f"  Verifying [{verified_count}/{len(verifiable)}] {variant.variant_id}"
+            )
             verify_result = self.verifier.verify(
                 trans.lean_code,
                 variant.original_task,
@@ -354,9 +377,9 @@ class BenchmarkPipeline:
             )
             all_results.append(verify_result)
 
+        passed = sum(1 for r in all_results if r.success)
         logger.info(
-            f"Phase 3 complete: {sum(1 for r in all_results if r.success)}/{len(all_results)} "
-            "passed verification"
+            f"Phase 3 complete: {passed}/{len(all_results)} passed verification"
         )
         return all_results
 
