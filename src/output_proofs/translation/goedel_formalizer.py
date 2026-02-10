@@ -92,14 +92,14 @@ class GoedelFormalizer:
                 quantization_config=bnb_config,
                 device_map="auto",
                 trust_remote_code=True,
-                attn_implementation="eager",
+                attn_implementation="sdpa",
             )
         else:
             dtype = torch.float16 if use_gpu else torch.float32
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.config.model_name,
                 torch_dtype=dtype,
-                attn_implementation="eager",
+                attn_implementation="sdpa",
                 device_map="auto" if use_gpu else None,
                 trust_remote_code=True,
             )
@@ -291,11 +291,17 @@ Python:
         prompts = [self._build_prompt(code, task) for code, task in zip(python_codes, tasks)]
 
         # Process in chunks
-        for chunk_start in range(0, len(python_codes), batch_size):
+        total_batches = (len(python_codes) + batch_size - 1) // batch_size
+        for batch_num, chunk_start in enumerate(range(0, len(python_codes), batch_size), 1):
             chunk_end = min(chunk_start + batch_size, len(python_codes))
             chunk_prompts = prompts[chunk_start:chunk_end]
             chunk_codes = python_codes[chunk_start:chunk_end]
             chunk_indices = list(range(chunk_start, chunk_end))
+
+            logger.info(
+                f"  Translation batch [{batch_num}/{total_batches}] "
+                f"({chunk_end}/{len(python_codes)} variants)"
+            )
 
             try:
                 chunk_results = self._translate_batch_chunk(chunk_prompts, chunk_codes)
