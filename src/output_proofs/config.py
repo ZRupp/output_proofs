@@ -108,7 +108,7 @@ class FormalizerConfig:
         )
     )
     device: str = field(default_factory=detect_device)
-    max_new_tokens: int = 1024
+    max_new_tokens: int = 256
     temperature: float = 0.2
     top_p: float = 0.95
     do_sample: bool = True
