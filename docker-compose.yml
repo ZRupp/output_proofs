@@ -20,7 +20,10 @@ services:
       - seccomp=unconfined
 
   # CPU-only profile for testing/dry-run without GPU
+  # Start with: docker compose --profile cpu-only up benchmark-cpu
   benchmark-cpu:
+    profiles:
+      - cpu-only
     build:
       context: .
       args:
