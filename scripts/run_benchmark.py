@@ -106,11 +106,11 @@ def parse_args():
         help="Enable int4 or int8 quantization (requires bitsandbytes)",
     )
 
-    # Caching
+    # Caching (on by default so Phase 1 results survive a Phase 2 crash)
     parser.add_argument(
-        "--cache",
+        "--no-cache",
         action="store_true",
-        help="Enable disk-based result caching for resumable runs",
+        help="Disable disk-based result caching",
     )
 
     parser.add_argument(
@@ -169,9 +169,9 @@ def main():
         model_config.device = args.device
         formalizer_config.device = args.device
 
-    # Build cache config
+    # Build cache config (enabled by default)
     cache_config = CacheConfig(
-        enabled=args.cache,
+        enabled=not args.no_cache,
         cache_dir=args.cache_dir,
     )
 
@@ -242,30 +242,31 @@ def main():
         logger.info(f"Saving report to {args.output}")
         report.save_detailed(args.output)
 
-        # Print summary
-        print("\n" + "=" * 60)
-        print("BENCHMARK RESULTS")
-        print("=" * 60)
-        print(f"Model: {report.model}")
-        print(f"Formalizer: {report.formalizer}")
-        print(f"Total tasks: {report.total_tasks}")
-        print(f"Total variants: {report.total_variants}")
-        print()
-        print("Pipeline Stage Success Rates:")
-        print(f"  Python generation: {report.pipeline_stages.python_generation_rate:.2%}")
-        print(f"  Translation:       {report.pipeline_stages.translation_success_rate:.2%}")
-        print(f"  Lean compilation:  {report.pipeline_stages.lean_compilation_rate:.2%}")
-        print(f"  Verification:      {report.pipeline_stages.verification_pass_rate:.2%}")
-        print()
-        print("Robustness Metrics:")
-        print(f"  Original pass rate: {report.robustness.original_pass_rate:.2%}")
-        print(f"  Variant pass rate:  {report.robustness.variant_pass_rate:.2%}")
-        print(f"  Robustness score:   {report.robustness.robustness_score:.2%}")
-        print()
-        print("By Transform:")
+        # Log summary
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("BENCHMARK RESULTS")
+        logger.info("=" * 60)
+        logger.info(f"Model: {report.model}")
+        logger.info(f"Formalizer: {report.formalizer}")
+        logger.info(f"Total tasks: {report.total_tasks}")
+        logger.info(f"Total variants: {report.total_variants}")
+        logger.info("")
+        logger.info("Pipeline Stage Success Rates:")
+        logger.info(f"  Python generation: {report.pipeline_stages.python_generation_rate:.2%}")
+        logger.info(f"  Translation:       {report.pipeline_stages.translation_success_rate:.2%}")
+        logger.info(f"  Lean compilation:  {report.pipeline_stages.lean_compilation_rate:.2%}")
+        logger.info(f"  Verification:      {report.pipeline_stages.verification_pass_rate:.2%}")
+        logger.info("")
+        logger.info("Robustness Metrics:")
+        logger.info(f"  Original pass rate: {report.robustness.original_pass_rate:.2%}")
+        logger.info(f"  Variant pass rate:  {report.robustness.variant_pass_rate:.2%}")
+        logger.info(f"  Robustness score:   {report.robustness.robustness_score:.2%}")
+        logger.info("")
+        logger.info("By Transform:")
         for name, rate in report.by_transform.items():
-            print(f"  {name}: {rate:.2%}")
-        print("=" * 60)
+            logger.info(f"  {name}: {rate:.2%}")
+        logger.info("=" * 60)
 
         return 0
 
