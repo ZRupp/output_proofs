@@ -89,13 +89,31 @@ def _parse_test_value(val_str: str) -> Any:
     return val_str
 
 
+def _columnar_to_rows(data: Any) -> List[Dict[str, Any]]:
+    """Convert HuggingFace column-oriented Sequence data to row-oriented.
+
+    HF Sequence of structs returns {"col1": [v1, v2], "col2": [v3, v4]}
+    instead of [{"col1": v1, "col2": v3}, {"col1": v2, "col2": v4}].
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        keys = list(data.keys())
+        if not keys:
+            return []
+        n = len(data[keys[0]])
+        return [{k: data[k][i] for k in keys} for i in range(n)]
+    return []
+
+
 def _build_signature(sig_dict: Dict[str, Any]):
     """Convert a signature dict to Verina's Signature Pydantic model."""
     from verina.dataset.schema import Parameter, Signature
 
+    params_raw = _columnar_to_rows(sig_dict.get("parameters", []))
     params = [
         Parameter(param_name=p["param_name"], param_type=p["param_type"])
-        for p in sig_dict.get("parameters", [])
+        for p in params_raw
     ]
     return Signature(
         name=sig_dict.get("name", ""),
@@ -104,16 +122,17 @@ def _build_signature(sig_dict: Dict[str, Any]):
     )
 
 
-def _build_test_cases(tests_raw: List[Dict[str, Any]]) -> list:
-    """Convert HF test dicts to Verina TestCase models.
+def _build_test_cases(tests_raw) -> list:
+    """Convert HF test data to Verina TestCase models.
 
-    HF format: {input: JSON_string, expected: [str, ...], unexpected: [str, ...]}
-    Verina format: TestCase(input: Dict, expected: Any, unexpected: List[Any])
+    Handles both row-oriented (list of dicts) and column-oriented (dict of
+    lists) formats that HuggingFace datasets may return for Sequence features.
     """
     from verina.dataset.schema import TestCase
 
+    rows = _columnar_to_rows(tests_raw)
     cases = []
-    for t in tests_raw:
+    for t in rows:
         # input: JSON string → dict, or already a dict
         inp = t.get("input", {})
         if isinstance(inp, str):
@@ -137,12 +156,13 @@ def _build_test_cases(tests_raw: List[Dict[str, Any]]) -> list:
     return cases
 
 
-def _build_reject_inputs(reject_raw: List[Dict[str, Any]]) -> list:
+def _build_reject_inputs(reject_raw) -> list:
     """Convert HF reject_inputs to Verina RejectInput models."""
     from verina.dataset.schema import RejectInput
 
+    rows = _columnar_to_rows(reject_raw)
     results = []
-    for r in reject_raw:
+    for r in rows:
         inp = r.get("input", {})
         if isinstance(inp, str):
             inp = json.loads(inp)
