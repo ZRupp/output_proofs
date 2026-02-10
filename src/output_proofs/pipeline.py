@@ -1,5 +1,6 @@
 """End-to-end benchmark pipeline orchestration."""
 
+import gc
 import logging
 from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional
@@ -122,6 +123,10 @@ class BenchmarkPipeline:
 
         # Phase 1: Code generation
         gen_results = self._phase_generate(all_variants, use_fim)
+
+        # Force full cleanup between phases so the generation model's VRAM
+        # is released before the (larger) translation model loads.
+        gc.collect()
 
         # Phase 2: Translation
         trans_results = self._phase_translate(all_variants, gen_results)
