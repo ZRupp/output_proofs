@@ -1,10 +1,11 @@
 """Lean verification using Verina's verification infrastructure."""
 
 import asyncio
+import json
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..config import PathConfig
 from ..tasks.schema import CombinedTask
@@ -62,9 +63,91 @@ def _setup_verina_import():
     verina_path = str(config.verina_path)
     if verina_path not in sys.path:
         sys.path.insert(0, verina_path)
-    # Test that verina can actually be imported
-
     return True
+
+
+def _parse_test_value(val_str: str) -> Any:
+    """Parse a stringified test value back to its Python type.
+
+    The HF dataset serializes values via str(), so True → "True", 5 → "5", etc.
+    """
+    if not isinstance(val_str, str):
+        return val_str
+    low = val_str.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    try:
+        return int(val_str)
+    except ValueError:
+        pass
+    try:
+        return float(val_str)
+    except ValueError:
+        pass
+    return val_str
+
+
+def _build_signature(sig_dict: Dict[str, Any]):
+    """Convert a signature dict to Verina's Signature Pydantic model."""
+    from verina.dataset.schema import Parameter, Signature
+
+    params = [
+        Parameter(param_name=p["param_name"], param_type=p["param_type"])
+        for p in sig_dict.get("parameters", [])
+    ]
+    return Signature(
+        name=sig_dict.get("name", ""),
+        parameters=params,
+        return_type=sig_dict.get("return_type", ""),
+    )
+
+
+def _build_test_cases(tests_raw: List[Dict[str, Any]]) -> list:
+    """Convert HF test dicts to Verina TestCase models.
+
+    HF format: {input: JSON_string, expected: [str, ...], unexpected: [str, ...]}
+    Verina format: TestCase(input: Dict, expected: Any, unexpected: List[Any])
+    """
+    from verina.dataset.schema import TestCase
+
+    cases = []
+    for t in tests_raw:
+        # input: JSON string → dict, or already a dict
+        inp = t.get("input", {})
+        if isinstance(inp, str):
+            inp = json.loads(inp)
+
+        # expected: list of strings → single value (take first)
+        exp_raw = t.get("expected", [])
+        if isinstance(exp_raw, list) and len(exp_raw) > 0:
+            expected = _parse_test_value(exp_raw[0])
+        else:
+            expected = _parse_test_value(exp_raw) if isinstance(exp_raw, str) else exp_raw
+
+        # unexpected: list of strings → list of values
+        unexp_raw = t.get("unexpected", [])
+        if isinstance(unexp_raw, list):
+            unexpected = [_parse_test_value(v) for v in unexp_raw]
+        else:
+            unexpected = []
+
+        cases.append(TestCase(input=inp, expected=expected, unexpected=unexpected))
+    return cases
+
+
+def _build_reject_inputs(reject_raw: List[Dict[str, Any]]) -> list:
+    """Convert HF reject_inputs to Verina RejectInput models."""
+    from verina.dataset.schema import RejectInput
+
+    results = []
+    for r in reject_raw:
+        inp = r.get("input", {})
+        if isinstance(inp, str):
+            inp = json.loads(inp)
+        results.append(RejectInput(input=inp))
+    return results
 
 
 class LeanVerifier:
@@ -134,7 +217,6 @@ class LeanVerifier:
             # Import Verina modules
             from verina.benchmark.metrics import metric_generated_code
             from verina.benchmark.report import EvaluationTaskArtifact
-            from verina.dataset.template import LeanGenerationTaskTemplate
 
             # Build artifact from translated Lean code
             artifact = EvaluationTaskArtifact(code=lean_code)
@@ -198,33 +280,52 @@ class LeanVerifier:
             )
 
     def _create_template(self, task: CombinedTask):
-        """Create Lean generation template from task."""
+        """Create Lean generation template from task.
+
+        Converts our signature dict to Verina's Signature Pydantic model.
+        """
         try:
             from verina.dataset.template import LeanGenerationTaskTemplate
 
-            return LeanGenerationTaskTemplate(task.verina.signature)
-        except Exception:
-            # Return a minimal template if creation fails
+            sig = _build_signature(task.verina.signature)
+            return LeanGenerationTaskTemplate(sig)
+        except Exception as e:
+            logger.warning(f"Failed to create template: {e}")
             return None
 
     def _get_benchmark_data(self, task: CombinedTask):
-        """Get benchmark data object from task's Verina spec."""
-        try:
-            from verina.dataset.schema import BenchmarkData
+        """Get benchmark data object from task's Verina spec.
 
-            # Create BenchmarkData from VerinaSpec
+        Converts our VerinaSpec fields to Verina's Pydantic models:
+        - lean_code (annotated string) → BenchmarkLeanData via parse_benchmark_lean_data()
+        - signature dict → Signature model
+        - tests list → List[TestCase]
+        - reject_inputs list → List[RejectInput]
+        """
+        try:
+            from verina.dataset.parsing import parse_benchmark_lean_data
+            from verina.dataset.schema import BenchmarkData, SpecDesc
+
+            spec = task.verina
+
+            lean_data = parse_benchmark_lean_data(spec.lean_code)
+            signature = _build_signature(spec.signature)
+            tests = _build_test_cases(spec.tests)
+            reject_inputs = _build_reject_inputs(spec.reject_inputs)
+
             return BenchmarkData(
-                data_id=task.verina.data_id,
-                signature=task.verina.signature,
-                lean_code=task.verina.lean_code,
-                precond=task.verina.precond,
-                postcond=task.verina.postcond,
-                spec_desc=task.verina.spec_desc,
-                test_cases=task.verina.test_cases,
+                data_id=spec.data_id,
+                description=spec.description,
+                signature=signature,
+                lean_data=lean_data,
+                spec_desc=SpecDesc(precond_desc="", postcond_desc=""),
+                reject_inputs=reject_inputs,
+                tests=tests,
+                metadata=None,
             )
-        except Exception:
-            # Return the verina spec directly as fallback
-            return task.verina
+        except Exception as e:
+            logger.error(f"Failed to build BenchmarkData: {e}")
+            raise
 
     def _verify_fallback(
         self,
