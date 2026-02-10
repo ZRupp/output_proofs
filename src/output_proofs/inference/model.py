@@ -95,7 +95,7 @@ class CodeGenerator:
                 quantization_config=bnb_config,
                 device_map="auto",
                 trust_remote_code=True,
-                attn_implementation="eager",
+                attn_implementation="sdpa",
             )
         else:
             dtype = torch.float16 if use_gpu else torch.float32
@@ -104,7 +104,7 @@ class CodeGenerator:
                 torch_dtype=dtype,
                 device_map="auto" if use_gpu else None,
                 trust_remote_code=True,
-                attn_implementation="eager",
+                attn_implementation="sdpa",
             )
             if not use_gpu:
                 self.model = self.model.to("cpu")
@@ -216,10 +216,16 @@ class CodeGenerator:
                 prompts.append(self.prompt_builder.create_instruction_prompt(variant))
 
         # Process in chunks
-        for chunk_start in range(0, len(variants), batch_size):
+        total_batches = (len(variants) + batch_size - 1) // batch_size
+        for batch_num, chunk_start in enumerate(range(0, len(variants), batch_size), 1):
             chunk_end = min(chunk_start + batch_size, len(variants))
             chunk_prompts = prompts[chunk_start:chunk_end]
             chunk_indices = list(range(chunk_start, chunk_end))
+
+            logger.info(
+                f"  Generation batch [{batch_num}/{total_batches}] "
+                f"({chunk_end}/{len(variants)} variants)"
+            )
 
             try:
                 chunk_results = self._generate_batch_chunk(chunk_prompts)
