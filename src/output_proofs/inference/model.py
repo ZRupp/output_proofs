@@ -307,13 +307,19 @@ class CodeGenerator:
         return response.strip()
 
     def unload(self) -> None:
-        """Unload model to free memory."""
-        if self.model is not None:
-            del self.model
-            self.model = None
-        if self.tokenizer is not None:
-            del self.tokenizer
-            self.tokenizer = None
+        """Unload model to free GPU memory.
+
+        Forces garbage collection before clearing the CUDA cache so that
+        cyclic references created by device_map="auto" (Accelerate dispatch
+        hooks) are broken and GPU tensors are actually deallocated.
+        """
+        import gc
+
+        self.model = None
+        self.tokenizer = None
+        self.prompt_builder = None
         self._loaded = False
+        gc.collect()
         if torch.cuda.is_available():
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
