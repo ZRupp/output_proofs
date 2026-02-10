@@ -68,54 +68,6 @@ def _extract_function_name(code: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def _build_verina_mapping(verina_dataset) -> Dict[str, VerinaSpec]:
-    """Build mapping from task descriptions to Verina specs.
-
-    Since Verina uses data_id like 'verina_basic_1' and MBPP uses task_id,
-    we need to match them based on task content.
-    """
-    verina_specs = {}
-
-    for row in verina_dataset:
-        data_id = row.get("data_id", "")
-        if "verina_basic" not in data_id:
-            continue
-
-        spec = VerinaSpec.from_dict(row)
-        verina_specs[data_id] = spec
-
-    return verina_specs
-
-
-def _match_mbpp_to_verina(
-    mbpp_task: MBPPTask,
-    verina_specs: Dict[str, VerinaSpec],
-    task_id_to_verina: Dict[int, str],
-) -> Optional[VerinaSpec]:
-    """Match an MBPP task to its Verina specification.
-
-    Uses pre-computed mapping if available, otherwise attempts heuristic matching.
-    """
-    # Check pre-computed mapping first
-    if mbpp_task.task_id in task_id_to_verina:
-        verina_id = task_id_to_verina[mbpp_task.task_id]
-        if verina_id in verina_specs:
-            return verina_specs[verina_id]
-
-    # Fallback: try to match by index (verina_basic_N corresponds to Nth MBPP task)
-    # This requires knowledge of the ordering in Verina
-    return None
-
-
-# Pre-computed mapping from MBPP task_id to Verina data_id
-# This mapping was derived from analyzing the Verina dataset
-# The verina_basic tasks are ordered sequentially and correspond to MBPP tasks
-MBPP_TO_VERINA_MAPPING: Dict[int, str] = {
-    # This mapping needs to be populated based on actual Verina dataset analysis
-    # For now, we use a heuristic based on task order
-}
-
-
 def load_mbpp_tasks() -> Dict[int, MBPPTask]:
     """Load MBPP tasks filtered to those with Verina specs."""
     # Try google-research-datasets/mbpp first (standard format)
