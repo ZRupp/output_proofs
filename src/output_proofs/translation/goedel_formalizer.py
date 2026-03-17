@@ -1,6 +1,7 @@
 """Translate Python code to Lean 4 using Goedel-Formalizer-V2-8B."""
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional
@@ -70,9 +71,12 @@ class GoedelFormalizer:
 
         logger.info(f"Loading Goedel-Formalizer: {self.config.model_name}")
 
+        hf_token = os.environ.get("HF_TOKEN") or None
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.config.model_name,
             trust_remote_code=True,
+            token=hf_token,
         )
 
         if self.tokenizer.pad_token is None:
@@ -93,6 +97,7 @@ class GoedelFormalizer:
                 device_map="auto",
                 trust_remote_code=True,
                 attn_implementation="sdpa",
+                token=hf_token,
             )
         else:
             dtype = torch.float16 if use_gpu else torch.float32
@@ -102,6 +107,7 @@ class GoedelFormalizer:
                 attn_implementation="sdpa",
                 device_map="auto" if use_gpu else None,
                 trust_remote_code=True,
+                token=hf_token,
             )
             if not use_gpu:
                 self.model = self.model.to("cpu")

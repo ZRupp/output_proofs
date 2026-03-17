@@ -5,7 +5,7 @@ services:
       args:
         - BASE_IMAGE=${BASE_IMAGE:-rocm/pytorch:rocm7.1_ubuntu22.04_py3.10_pytorch_release_2.9.1}
     environment:
-      - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
+      - INFERENCE_MODEL=${INFERENCE_MODEL:-meta-llama/Llama-3.2-3B-Instruct}
       - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
       - HF_TOKEN=${HF_TOKEN:-}
       - DEVICE=${DEVICE:-auto}
@@ -18,7 +18,7 @@ services:
       - /dev/dri:/dev/dri
     security_opt:
       - seccomp=unconfined
-    command: ["--quantize", "4", "--translation-batch-size", "2"]
+    command: ["--quantize", "4"]
 
   # CPU-only profile for testing/dry-run without GPU
   # Start with: docker compose --profile cpu-only up benchmark-cpu
@@ -30,7 +30,7 @@ services:
       args:
         - BASE_IMAGE=${BASE_IMAGE:-rocm/pytorch:rocm7.1_ubuntu22.04_py3.10_pytorch_release_2.9.1}
     environment:
-      - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt2}
+      - INFERENCE_MODEL=${INFERENCE_MODEL:-meta-llama/Llama-3.2-3B-Instruct}
       - FORMALIZER_MODEL=${FORMALIZER_MODEL:-Goedel-LM/Goedel-Formalizer-V2-8B}
       - HF_TOKEN=${HF_TOKEN:-}
       - DEVICE=cpu

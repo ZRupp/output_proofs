@@ -154,8 +154,8 @@ class PipelineConfig:
 
     # Pipeline settings
     num_variants_per_task: int = 5
-    generation_batch_size: int = 8
-    translation_batch_size: int = 4
+    generation_batch_size: int = 16
+    translation_batch_size: int = 8
 
     # Caching
     cache: CacheConfig = field(default_factory=CacheConfig)

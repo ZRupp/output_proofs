@@ -1,6 +1,6 @@
 """Lean verification using Verina's verification infrastructure."""
 
-import asyncio
+import ast
 import json
 import logging
 import sys
@@ -66,10 +66,32 @@ def _setup_verina_import():
     return True
 
 
+def _parse_dict_string(s: str) -> Dict[str, Any]:
+    """Parse a string that may be JSON or a Python dict literal.
+
+    The HF dataset uses json.dumps() for inputs, but some entries may use
+    Python repr format (single quotes). ast.literal_eval is safe — it only
+    parses literal expressions (strings, numbers, tuples, lists, dicts,
+    booleans, None), never arbitrary code.
+    """
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Safe fallback: ast.literal_eval only handles literal data structures
+    try:
+        result = ast.literal_eval(s)
+        if isinstance(result, dict):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+    return {}
+
+
 def _parse_test_value(val_str: str) -> Any:
     """Parse a stringified test value back to its Python type.
 
-    The HF dataset serializes values via str(), so True → "True", 5 → "5", etc.
+    The HF dataset serializes values via str(), so True -> "True", 5 -> "5", etc.
     """
     if not isinstance(val_str, str):
         return val_str
@@ -133,10 +155,10 @@ def _build_test_cases(tests_raw) -> list:
     rows = _columnar_to_rows(tests_raw)
     cases = []
     for t in rows:
-        # input: JSON string → dict, or already a dict
+        # input: JSON or Python dict string → dict, or already a dict
         inp = t.get("input", {})
         if isinstance(inp, str):
-            inp = json.loads(inp)
+            inp = _parse_dict_string(inp)
 
         # expected: list of strings → single value (take first)
         exp_raw = t.get("expected", [])
@@ -165,7 +187,7 @@ def _build_reject_inputs(reject_raw) -> list:
     for r in rows:
         inp = r.get("input", {})
         if isinstance(inp, str):
-            inp = json.loads(inp)
+            inp = _parse_dict_string(inp)
         results.append(RejectInput(input=inp))
     return results
 
@@ -197,6 +219,10 @@ class LeanVerifier:
     ) -> VerificationResult:
         """Verify Lean code against Verina specification.
 
+        Bypasses Verina's Prefect @task decorators and calls the Lean
+        compiler directly via subprocess, avoiding issues with running
+        Prefect tasks outside a Prefect flow context.
+
         Args:
             lean_code: Lean code to verify
             task: Combined task with Verina spec
@@ -211,54 +237,57 @@ class LeanVerifier:
                 lean_code, task, variant_id, python_code, "Verina not available"
             )
 
-        try:
-            # Run async verification
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(
-                self._verify_async(lean_code, task, variant_id, python_code)
-            )
-        except RuntimeError:
-            # No event loop, create one
-            return asyncio.run(self._verify_async(lean_code, task, variant_id, python_code))
-
-    async def _verify_async(
-        self,
-        lean_code: str,
-        task: CombinedTask,
-        variant_id: str,
-        python_code: str,
-    ) -> VerificationResult:
-        """Async verification using Verina APIs."""
         import time
+        from uuid import uuid4
 
         start_time = time.time()
 
         try:
-            # Import Verina modules
-            from verina.benchmark.metrics import metric_generated_code
             from verina.benchmark.report import EvaluationTaskArtifact
+            from verina.lean import check_lean_compile, create_lean_file
 
-            # Build artifact from translated Lean code
+            template = self._create_template(task)
+            benchmark_data = self._get_benchmark_data(task)
             artifact = EvaluationTaskArtifact(code=lean_code)
 
-            # Create template using Verina spec
-            # Note: LeanGenerationTaskTemplate expects specific format
-            template = self._create_template(task)
-
-            # Get benchmark data for the task
-            benchmark_data = self._get_benchmark_data(task)
-
-            # Run verification
-            score = await metric_generated_code(template, benchmark_data, artifact)
-
-            # Parse results
-            tests_passed = sum(
-                1 for s in score.unit_tests.values() if hasattr(s, "value") and s.value == "pass"
+            # Render Lean content — same logic as Verina's metric_generated_code
+            lean_content = (
+                template.render_imports(benchmark_data.lean_data.task_imports, "task")
+                + "\n"
             )
-            tests_failed = sum(
-                1 for s in score.unit_tests.values() if hasattr(s, "value") and s.value == "fail"
+            lean_content += (
+                template.render_imports(artifact.imports, "llm_solution") + "\n"
             )
-            tests_total = len(score.unit_tests)
+            lean_content += (
+                template.render_aux(benchmark_data.lean_data.task_aux, "task") + "\n"
+            )
+            lean_content += (
+                template.render_aux(artifact.precond_aux, "precond") + "\n"
+            )
+            precond = artifact.precond if artifact.precond else "True -- no precondition"
+            lean_content += template.render_precond(precond) + "\n"
+            lean_content += template.render_aux(artifact.code_aux, "code") + "\n"
+            lean_content += template.render_code(artifact.code) + "\n"
+
+            # Compile directly (bypassing Prefect @task)
+            lean_file = create_lean_file(str(uuid4()), lean_content)
+            can_compile, compile_output = check_lean_compile(lean_file)
+
+            logger.debug(
+                f"Lean compile {'OK' if can_compile else 'FAIL'} for "
+                f"task {task.task_id} variant {variant_id}"
+            )
+
+            # Run unit tests if compilation succeeds
+            tests_passed = 0
+            tests_failed = 0
+            tests_total = len(benchmark_data.tests)
+
+            if can_compile and tests_total > 0:
+                tests_passed, tests_failed = self._run_unit_tests(
+                    template, lean_content, benchmark_data.tests
+                )
+                tests_total = tests_passed + tests_failed
 
             elapsed_ms = (time.time() - start_time) * 1000
 
@@ -268,11 +297,12 @@ class LeanVerifier:
                 python_generated=python_code,
                 lean_translated=lean_code,
                 translation_success=True,
-                lean_compiles=score.can_compile,
+                lean_compiles=can_compile,
                 tests_passed=tests_passed,
                 tests_failed=tests_failed,
                 tests_total=tests_total,
-                proof_valid=None,  # Proof checking is separate
+                proof_valid=None,
+                compiler_output=compile_output[:500] if not can_compile else "",
                 verification_time_ms=elapsed_ms,
             )
 
@@ -282,7 +312,7 @@ class LeanVerifier:
                 lean_code, task, variant_id, python_code, f"Verina import error: {e}"
             )
         except Exception as e:
-            logger.error(f"Verification error: {e}")
+            logger.error(f"Verification error for task {task.task_id}: {e}")
             elapsed_ms = (time.time() - start_time) * 1000
             return VerificationResult(
                 task_id=task.task_id,
@@ -298,6 +328,52 @@ class LeanVerifier:
                 error=str(e),
                 verification_time_ms=elapsed_ms,
             )
+
+    def _run_unit_tests(self, template, base_lean_content, test_cases) -> tuple:
+        """Run Lean unit tests by compiling test file directly.
+
+        Returns (tests_passed, tests_failed).
+        """
+        from uuid import uuid4
+
+        from verina.lean import check_lean_compile, create_lean_file
+
+        test_content = (
+            template.render_test_imports() + "\n" + base_lean_content
+        )
+        for idx, test_case in enumerate(test_cases):
+            test_content += "\n\n" + template.render_code_unit_test(
+                test_case, test_idx=idx
+            )
+
+        test_file = create_lean_file(str(uuid4()), test_content)
+        tests_compile, test_output = check_lean_compile(test_file)
+
+        if tests_compile:
+            return len(test_cases), 0
+
+        # Parse individual test results from compiler output
+        passed = 0
+        failed = 0
+        marker_start = f"<{template.CODE_TEST_MSG_MARKER}>"
+        marker_end = f"</{template.CODE_TEST_MSG_MARKER}>"
+
+        for idx in range(len(test_cases)):
+            tag = f"{marker_start}{idx}{marker_end}"
+            if tag in test_output:
+                # Find the output after this test's marker
+                after_tag = test_output.split(tag, 1)[1]
+                # Check up to next marker or end
+                next_marker = after_tag.find(marker_start)
+                segment = after_tag[:next_marker] if next_marker != -1 else after_tag
+                if template.DECIDABLE_ERR_MSG in segment:
+                    failed += 1
+                else:
+                    passed += 1
+            else:
+                failed += 1
+
+        return passed, failed
 
     def _create_template(self, task: CombinedTask):
         """Create Lean generation template from task.

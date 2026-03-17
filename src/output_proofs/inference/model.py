@@ -1,6 +1,7 @@
 """Llama-3.2-3B model wrapper for code generation."""
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -74,9 +75,12 @@ class CodeGenerator:
 
         logger.info(f"Loading model: {self.config.model_name}")
 
+        hf_token = os.environ.get("HF_TOKEN") or None
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.config.model_name,
             trust_remote_code=True,
+            token=hf_token,
         )
 
         if self.tokenizer.pad_token is None:
@@ -96,6 +100,7 @@ class CodeGenerator:
                 device_map="auto",
                 trust_remote_code=True,
                 attn_implementation="sdpa",
+                token=hf_token,
             )
         else:
             dtype = torch.float16 if use_gpu else torch.float32
@@ -105,6 +110,7 @@ class CodeGenerator:
                 device_map="auto" if use_gpu else None,
                 trust_remote_code=True,
                 attn_implementation="sdpa",
+                token=hf_token,
             )
             if not use_gpu:
                 self.model = self.model.to("cpu")
